@@ -26,6 +26,15 @@ class Frame:
 
 
 @dataclass
+class MeasurementState:
+    """每个设备卡片的测量运行时状态，独立于串口层。"""
+
+    last_reading: float | None = None
+    baseline: float | None = None
+    zero_pending: bool = False
+
+
+@dataclass
 class DeviceConfig:
     device_id: str  # 唯一标识，如 "device_1"
     name: str  # 显示名称，如 "传感器 A"

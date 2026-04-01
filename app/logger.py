@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from loguru import logger
@@ -8,11 +9,10 @@ def setup_logger(log_dir: str | Path = "logs") -> None:
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
 
-    # 移除默认 sink，统一格式
     logger.remove()
 
     logger.add(
-        sink=lambda msg: print(msg, end=""),
+        sys.stderr,
         level="DEBUG",
         format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | {message}",
         colorize=True,

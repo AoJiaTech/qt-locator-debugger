@@ -147,7 +147,7 @@ class SerialWorker(QObject):
                 await self.send(data)
                 try:
                     await asyncio.wait_for(self._loop_stop_event.wait(), timeout=interval_s)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass  # 正常超时，继续下一轮
         except asyncio.CancelledError:
             pass

@@ -1,18 +1,23 @@
 import asyncio
 
 from PySide6.QtCore import Qt, Slot
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QSplitter, QWidget
-from qfluentwidgets import FluentWindow, FluentIcon, NavigationItemPosition, setTheme, Theme
+from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout
+from qfluentwidgets import FluentIcon, FluentWindow, NavigationItemPosition
 
 from app.models.domain import DeviceConfig
-from app.serial.manager import SerialManager
-from app.storage.repository import SQLAlchemyRepository
-from app.ui.device_list_panel import DeviceListPanel
 from app.ui.device_panel import DevicePanel
+from app.serial.manager import SerialManager
+from app.serial.parser import BUILTIN_PARSERS
+from app.ui.device_list_panel import DeviceListPanel
+from app.storage.repository import SQLAlchemyRepository
+from app.serial.parsers.laser import LaserDisplacementParser
+
+# 注册激光位移传感器解析器
+BUILTIN_PARSERS["激光位移传感器"] = LaserDisplacementParser
 
 DEFAULT_DEVICES: list[DeviceConfig] = [
     DeviceConfig(device_id="device_1", name="设备 1"),
-    DeviceConfig(device_id="device_2", name="激光位移传感器"),
+    DeviceConfig(device_id="device_2", name="设备 2"),
     DeviceConfig(device_id="device_3", name="设备 3"),
 ]
 
@@ -41,13 +46,15 @@ class _MainPage(QWidget):
         splitter.setHandleWidth(1)
         splitter.setStyleSheet("QSplitter::handle { background: rgba(0,0,0,0.08); }")
 
-        # 左侧设备列表
-        self._device_list = DeviceListPanel(DEFAULT_DEVICES, self._manager, self._repository)
+        self._device_list = DeviceListPanel(
+            DEFAULT_DEVICES,
+            self._manager,
+            self._repository,
+        )
         self._device_list.setFixedWidth(272)
         self._device_list.device_selected.connect(self._on_device_selected)
         splitter.addWidget(self._device_list)
 
-        # 右侧收发面板
         self._device_panel = DevicePanel()
         splitter.addWidget(self._device_panel)
 
@@ -60,7 +67,7 @@ class _MainPage(QWidget):
     @Slot(str)
     def _on_device_selected(self, device_id: str) -> None:
         worker = self._manager.get_worker(device_id)
-        cfg = next((d for d in DEFAULT_DEVICES if d.device_id == device_id), None)
+        cfg = self._device_list.get_config(device_id)
         name = cfg.name if cfg else device_id
         if worker:
             self._device_panel.add_tab(device_id, f"{name}  [{worker.config.port}]", worker)
@@ -69,10 +76,7 @@ class _MainPage(QWidget):
 
 
 class MainWindow(FluentWindow):
-    """
-    主窗口，基于 FluentWindow（无边框 + Mica/Acrylic 背景）。
-    导航栏最小化，仅保留主页入口；主体为左右分栏调试界面。
-    """
+    """主窗口。"""
 
     def __init__(self) -> None:
         super().__init__()

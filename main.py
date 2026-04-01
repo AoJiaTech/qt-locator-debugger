@@ -2,8 +2,8 @@ import sys
 import asyncio
 
 from PySide6.QtWidgets import QApplication
+from qfluentwidgets import Theme, setTheme
 from PySide6.QtAsyncio import QAsyncioEventLoop
-from qfluentwidgets import setTheme, Theme
 
 from app.logger import setup_logger
 from app.ui.main_window import MainWindow
@@ -21,6 +21,6 @@ async def main() -> None:
 if __name__ == "__main__":
     setup_logger()
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")          # Fluent Widgets 在此基础上叠加自己的样式
-    setTheme(Theme.AUTO)            # 跟随系统亮/暗模式
+    app.setStyle("Fusion")  # Fluent Widgets 在此基础上叠加自己的样式
+    setTheme(Theme.AUTO)  # 跟随系统亮/暗模式
     asyncio.run(main(), loop_factory=lambda: QAsyncioEventLoop(app))

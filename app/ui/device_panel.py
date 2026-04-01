@@ -2,30 +2,30 @@ import asyncio
 
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
-    QSizePolicy,
-    QSplitter,
-    QVBoxLayout,
     QWidget,
+    QSplitter,
+    QHBoxLayout,
+    QSizePolicy,
+    QVBoxLayout,
 )
 from qfluentwidgets import (
-    BodyLabel,
-    CardWidget,
-    ComboBox,
-    EditableComboBox,
-    FluentIcon,
-    PlainTextEdit,
-    PrimaryPushButton,
-    PushButton,
     SpinBox,
+    ComboBox,
+    BodyLabel,
     TabWidget,
+    CardWidget,
+    FluentIcon,
+    PushButton,
+    PlainTextEdit,
+    EditableComboBox,
+    PrimaryPushButton,
     TransparentPushButton,
 )
 
 from app.logger import logger
-from app.models.domain import Direction, Frame
 from app.serial.worker import SerialWorker
+from app.models.domain import Frame, Direction
 
 
 class ChartPlaceholder(QWidget):
@@ -40,8 +40,7 @@ class ChartPlaceholder(QWidget):
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         lbl.setStyleSheet(
-            "color: #999; font-size: 13px; "
-            "border: 1.5px dashed #ddd; border-radius: 8px; background: transparent;"
+            "color: #999; font-size: 13px; border: 1.5px dashed #ddd; border-radius: 8px; background: transparent;"
         )
         layout.addWidget(lbl)
         self._label = lbl
@@ -114,7 +113,7 @@ class SendPanel(CardWidget):
         loop_row.addWidget(self._clear_btn)
         root.addLayout(loop_row)
 
-        self._on_clear_cb = None   # 由 PortTab 注入
+        self._on_clear_cb = None  # 由 PortTab 注入
 
     def set_worker(self, worker: SerialWorker | None) -> None:
         self._worker = worker
@@ -226,7 +225,7 @@ class PortTab(QWidget):
         else:
             prefix = '<span style="color:#107c10;">← RX</span>'
         hex_str = frame.raw.hex(" ").upper()
-        line = f'[{ts}] {prefix} | {hex_str}'
+        line = f"[{ts}] {prefix} | {hex_str}"
         if frame.parsed:
             line += f'<br><span style="color:#888;margin-left:32px;">　　 解析: {frame.parsed}</span>'
         # PlainTextEdit 不支持 HTML，改用 appendPlainText 保持性能
