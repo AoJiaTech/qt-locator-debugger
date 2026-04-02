@@ -1,11 +1,29 @@
 from datetime import datetime
 
-from sqlalchemy import Text, String, DateTime
+from sqlalchemy import Text, Float, String, Integer, DateTime
 from sqlalchemy.orm import Mapped, DeclarativeBase, mapped_column
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class DeviceRecord(Base):
+    """持久化的设备配置，对应左侧列表每个条目。"""
+
+    __tablename__ = "devices"
+
+    device_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    parser_name: Mapped[str] = mapped_column(String(64), default="Raw Hex")
+    read_cmd_hex: Mapped[str] = mapped_column(String(128), default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # 串口配置（可空，未选择时为 NULL）
+    port: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    baudrate: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    bytesize: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    parity: Mapped[str | None] = mapped_column(String(4), nullable=True, default=None)
+    stopbits: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
 
 class ParsedRecord(Base):

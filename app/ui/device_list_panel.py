@@ -3,10 +3,17 @@
 import uuid
 import asyncio
 
-from PySide6.QtGui import QColor
-from PySide6.QtCore import Qt, Slot, Signal
+from PySide6.QtGui import QDrag, QColor, QPixmap
 from PySide6.QtSerialPort import QSerialPortInfo
-from PySide6.QtWidgets import QFrame, QWidget, QHBoxLayout, QSizePolicy, QVBoxLayout
+from PySide6.QtCore import Qt, Slot, QEvent, QPoint, Signal, QMimeData
+from PySide6.QtWidgets import (
+    QFrame,
+    QWidget,
+    QHBoxLayout,
+    QSizePolicy,
+    QVBoxLayout,
+    QStackedWidget,
+)
 from qfluentwidgets import (
     InfoBar,
     ComboBox,
@@ -20,21 +27,27 @@ from qfluentwidgets import (
     CaptionLabel,
     SwitchButton,
     SubtitleLabel,
+    MessageBoxBase,
     InfoBarPosition,
     LargeTitleLabel,
     StrongBodyLabel,
+    TransparentToolButton,
 )
 
 from app.utils import build_modbus_frame
 from app.serial.manager import SerialManager
 from app.serial.parser import BUILTIN_PARSERS
-from app.storage.repository import BaseRepository
+from app.storage.repository import BaseRepository, SQLAlchemyRepository
 from app.models.domain import PortConfig, DeviceConfig, MeasurementState
 
 BAUDRATES = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
 
 _COLOR_CONNECTED = "#0078d4"
 _COLOR_DISCONNECTED = "#8a8a8a"
+
+_BYTESIZE_OPTIONS = ["5", "6", "7", "8"]
+_PARITY_OPTIONS = [("N", "无"), ("E", "偶"), ("O", "奇"), ("M", "标记"), ("S", "空格")]
+_STOPBITS_OPTIONS = [("1", 1.0), ("1.5", 1.5), ("2", 2.0)]
 
 
 class StatusDot(QWidget):
@@ -104,6 +117,180 @@ class _MeasurementDisplay(CardWidget):
         self._baseline_info.setText("")
 
 
+class _DragHandle(TransparentToolButton):
+    """拖拽排序手柄。在自身的 mouseMoveEvent 里直接启动 QDrag，
+    避免父控件 mousePressEvent 被子控件事件消费而拿不到的问题。"""
+
+    drag_started = Signal(object)  # 传递 QDrag 对象，由父卡片填充 MimeData 并 exec
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setIcon(FluentIcon.MOVE)
+        self.setFixedSize(28, 28)
+        self.setToolTip("拖拽排序")
+        self.setCursor(Qt.CursorShape.SizeVerCursor)
+        self._press_pos: QPoint | None = None
+
+    def mousePressEvent(self, e) -> None:  # type: ignore[override]
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._press_pos = e.pos()
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e) -> None:  # type: ignore[override]
+        if self._press_pos is not None and e.buttons() & Qt.MouseButton.LeftButton:
+            drag = QDrag(self)
+            self.drag_started.emit(drag)
+            self._press_pos = None
+            drag.exec(Qt.DropAction.MoveAction)
+        else:
+            super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e) -> None:  # type: ignore[override]
+        self._press_pos = None
+        super().mouseReleaseEvent(e)
+
+
+class _EditableLabel(QStackedWidget):
+    """双击可编辑的标签控件。层0=只读Label，层1=LineEdit。"""
+
+    name_changed = Signal(str)
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._committing = False
+        self._editable = True
+        # 透明背景，避免 QStackedWidget 默认背景色破坏卡片样式
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self._label = StrongBodyLabel(text)
+        self._edit = LineEdit()
+        self._edit.setFixedHeight(28)
+
+        self.addWidget(self._label)  # index 0
+        self.addWidget(self._edit)  # index 1
+
+        self._label.installEventFilter(self)
+        self._edit.returnPressed.connect(self._commit)
+        self._edit.editingFinished.connect(self._on_editing_finished)
+
+    def set_editable(self, editable: bool) -> None:
+        self._editable = editable
+
+    def text(self) -> str:
+        return self._label.text()
+
+    def eventFilter(self, obj, event):
+        if obj is self._label and event.type() == QEvent.Type.MouseButtonDblClick:
+            if self._editable:
+                self._start_edit()
+            return True
+        return super().eventFilter(obj, event)
+
+    def _start_edit(self) -> None:
+        self._edit.setText(self._label.text())
+        self._edit.selectAll()
+        self.setCurrentIndex(1)
+        self._edit.setFocus()
+
+    def _commit(self) -> None:
+        if self._committing:
+            return
+        self._committing = True
+        text = self._edit.text().strip()
+        if text:
+            self._label.setText(text)
+            self.name_changed.emit(text)
+        self.setCurrentIndex(0)
+        self._committing = False
+
+    def _on_editing_finished(self) -> None:
+        # returnPressed 已经调用 _commit，editingFinished 会再次触发，用 flag 避免重复
+        if not self._committing and self.currentIndex() == 1:
+            self._commit()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape and self.currentIndex() == 1:
+            self._committing = True
+            self.setCurrentIndex(0)
+            self._committing = False
+        else:
+            super().keyPressEvent(event)
+
+
+class _AdvancedPortDialog(MessageBoxBase):
+    """高级串口参数配置弹窗（数据位/校验位/停止位），Fluent 风格。"""
+
+    def __init__(self, port_config: PortConfig | None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._result_config: PortConfig | None = None
+        self._port_config = port_config
+
+        # 从当前配置读取初始值，没有则用默认
+        bytesize = port_config.bytesize if port_config else 8
+        parity = port_config.parity if port_config else "N"
+        stopbits = port_config.stopbits if port_config else 1.0
+
+        # 标题
+        title_label = SubtitleLabel("高级串口参数", self.widget)
+        self.viewLayout.addWidget(title_label)
+        self.viewLayout.addSpacing(8)
+
+        # 数据位
+        self._bytesize_combo = ComboBox(self.widget)
+        self._bytesize_combo.addItems(_BYTESIZE_OPTIONS)
+        self._bytesize_combo.setCurrentText(str(bytesize))
+        self.viewLayout.addLayout(self._field_row("数据位", self._bytesize_combo))
+
+        # 校验位
+        self._parity_combo = ComboBox(self.widget)
+        for code, label in _PARITY_OPTIONS:
+            self._parity_combo.addItem(label, userData=code)
+        current_parity_idx = next((i for i, (c, _) in enumerate(_PARITY_OPTIONS) if c == parity), 0)
+        self._parity_combo.setCurrentIndex(current_parity_idx)
+        self.viewLayout.addLayout(self._field_row("校验位", self._parity_combo))
+
+        # 停止位
+        self._stopbits_combo = ComboBox(self.widget)
+        for label, _ in _STOPBITS_OPTIONS:
+            self._stopbits_combo.addItem(label)
+        current_stop_idx = next((i for i, (_, v) in enumerate(_STOPBITS_OPTIONS) if v == stopbits), 0)
+        self._stopbits_combo.setCurrentIndex(current_stop_idx)
+        self.viewLayout.addLayout(self._field_row("停止位", self._stopbits_combo))
+
+        self.widget.setMinimumWidth(300)
+        self.yesButton.setText("确定")
+        self.cancelButton.setText("取消")
+        self.yesButton.clicked.connect(self._on_ok)
+
+    @staticmethod
+    def _field_row(label_text: str, widget: QWidget) -> QHBoxLayout:
+        row = QHBoxLayout()
+        lbl = BodyLabel(label_text)
+        lbl.setFixedWidth(50)
+        row.addWidget(lbl)
+        row.addWidget(widget)
+        return row
+
+    def _on_ok(self) -> None:
+        bytesize = int(self._bytesize_combo.currentText())
+        parity = self._parity_combo.currentData()
+        stopbits_text = self._stopbits_combo.currentText()
+        stopbits = next(v for label, v in _STOPBITS_OPTIONS if label == stopbits_text)
+        port = self._port_config.port if self._port_config else ""
+        baudrate = self._port_config.baudrate if self._port_config else 9600
+        self._result_config = PortConfig(
+            port=port,
+            baudrate=baudrate,
+            bytesize=bytesize,
+            parity=str(parity) if parity is not None else "N",
+            stopbits=stopbits,
+        )
+
+    def get_result(self) -> PortConfig | None:
+        """返回用户确认后的新 PortConfig，取消则返回 None。"""
+        return self._result_config
+
+
 class DeviceCard(CardWidget):
     """
     通用设备卡片。
@@ -117,6 +304,8 @@ class DeviceCard(CardWidget):
 
     device_selected = Signal(str)  # device_id
     remove_requested = Signal(str)  # device_id
+    cmd_changed = Signal(str, str)  # device_id, new_hex
+    port_config_changed = Signal(str, object)  # device_id, PortConfig | None
 
     def __init__(
         self,
@@ -136,6 +325,10 @@ class DeviceCard(CardWidget):
         self.setBorderRadius(8)
         self._build_ui()
         self._refresh_ports()
+        self._restore_port_config()
+        # 完成初始化后再连接 combo 信号，避免初始化时触发保存
+        self._port_combo.currentIndexChanged.connect(self._on_port_config_changed)
+        self._baud_combo.currentIndexChanged.connect(self._on_port_config_changed)
 
     # ------------------------------------------------------------------ #
     # UI 构建
@@ -148,13 +341,27 @@ class DeviceCard(CardWidget):
 
         # ── 标题行 ──────────────────────────────────────────────────────
         header = QHBoxLayout()
+
+        # 拖拽手柄
+        self._drag_handle = _DragHandle()
+        self._drag_handle.drag_started.connect(self._on_drag_started)
+        header.addWidget(self._drag_handle)
+        header.addSpacing(4)
+
         self._dot = StatusDot()
         header.addWidget(self._dot)
         header.addSpacing(6)
 
-        self._title_label = StrongBodyLabel(self._config.name)
-        header.addWidget(self._title_label)
+        self._name_label = _EditableLabel(self._config.name)
+        self._name_label.name_changed.connect(self._on_name_changed)
+        header.addWidget(self._name_label)
         header.addStretch()
+
+        self._advanced_btn = ToolButton(FluentIcon.SETTING)
+        self._advanced_btn.setFixedSize(28, 28)
+        self._advanced_btn.setToolTip("高级串口参数")
+        self._advanced_btn.clicked.connect(self._on_advanced_port)
+        header.addWidget(self._advanced_btn)
 
         self._refresh_btn = ToolButton(FluentIcon.SYNC)
         self._refresh_btn.setFixedSize(28, 28)
@@ -194,8 +401,10 @@ class DeviceCard(CardWidget):
 
         # ── 读取命令输入 ──────────────────────────────────────────────────
         self._cmd_edit = LineEdit()
-        self._cmd_edit.setPlaceholderText("读取指令（HEX，不含CRC），如 01 03 00 0D 00 04")
+        self._cmd_edit.setPlaceholderText("读取指令（HEX，不含CRC）")
         self._cmd_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._cmd_edit.setText(self._config.read_cmd_hex)
+        self._cmd_edit.editingFinished.connect(self._on_cmd_changed)
         root.addWidget(self._cmd_edit)
 
         # ── 测量显示区 ────────────────────────────────────────────────────
@@ -234,7 +443,7 @@ class DeviceCard(CardWidget):
     def _make_baud_combo(self) -> QWidget:
         self._baud_combo = ComboBox()
         self._baud_combo.addItems(BAUDRATES)
-        self._baud_combo.setCurrentText(str(self._config.port_config.baudrate if self._config.port_config else 115200))
+        self._baud_combo.setCurrentText(str(self._config.port_config.baudrate if self._config.port_config else 9600))
         self._baud_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         return self._baud_combo
 
@@ -244,6 +453,16 @@ class DeviceCard(CardWidget):
         self._parser_combo.setCurrentText(self._config.parser_name)
         self._parser_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         return self._parser_combo
+
+    def _restore_port_config(self) -> None:
+        """应用启动时，若 DB 有保存的串口配置，回填到下拉框。"""
+        pc = self._config.port_config
+        if pc is None:
+            return
+        ports = [self._port_combo.itemText(i) for i in range(self._port_combo.count())]
+        if pc.port in ports:
+            self._port_combo.setCurrentText(pc.port)
+        self._baud_combo.setCurrentText(str(pc.baudrate))
 
     def _set_measurement_enabled(self, enabled: bool) -> None:
         self._zero_btn.setEnabled(enabled)
@@ -276,6 +495,47 @@ class DeviceCard(CardWidget):
         if current in ports:
             self._port_combo.setCurrentText(current)
 
+    @Slot()
+    def _on_port_config_changed(self) -> None:
+        """串口或波特率选择变化时，持久化当前配置。"""
+        port = self._port_combo.currentText()
+        baudrate_text = self._baud_combo.currentText()
+        if not port or not baudrate_text:
+            return
+        existing = self._config.port_config
+        new_config = PortConfig(
+            port=port,
+            baudrate=int(baudrate_text),
+            bytesize=existing.bytesize if existing else 8,
+            parity=existing.parity if existing else "N",
+            stopbits=existing.stopbits if existing else 1.0,
+        )
+        self._config.port_config = new_config
+        self.port_config_changed.emit(self._config.device_id, new_config)
+
+    @Slot()
+    def _on_name_changed(self, name: str) -> None:
+        self._config.name = name
+        self.port_config_changed.emit(self._config.device_id, self._config.port_config)
+
+    @Slot()
+    def _on_advanced_port(self) -> None:
+        if self.worker is not None:
+            InfoBar.warning(
+                title="请先断开连接",
+                content="修改高级串口参数前请先断开设备连接。",
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=3000,
+                parent=self.window(),
+            )
+            return
+        dialog = _AdvancedPortDialog(self._config.port_config, parent=self)
+        dialog.exec()
+        result = dialog.get_result()
+        if result is not None:
+            self._config.port_config = result
+            self.port_config_changed.emit(self._config.device_id, result)
+
     @Slot(bool)
     def _on_switch_changed(self, checked: bool) -> None:
         if checked:
@@ -288,7 +548,14 @@ class DeviceCard(CardWidget):
         if not port:
             self._switch.setChecked(False)
             return
-        config = PortConfig(port=port, baudrate=int(self._baud_combo.currentText()))
+        existing = self._config.port_config
+        config = PortConfig(
+            port=port,
+            baudrate=int(self._baud_combo.currentText()),
+            bytesize=existing.bytesize if existing else 8,
+            parity=existing.parity if existing else "N",
+            stopbits=existing.stopbits if existing else 1.0,
+        )
         parser_cls = BUILTIN_PARSERS[self._parser_combo.currentText()]
         self.worker = self._manager.create_worker(self._config.device_id, config, parser_cls(), self._repository)
         self.worker.connected.connect(self._on_connected)
@@ -298,6 +565,8 @@ class DeviceCard(CardWidget):
         self._port_combo.setEnabled(False)
         self._baud_combo.setEnabled(False)
         self._parser_combo.setEnabled(False)
+        self._name_label.set_editable(False)
+        self._advanced_btn.setEnabled(False)
         asyncio.create_task(self.worker.connect())
 
     def _do_disconnect(self) -> None:
@@ -319,6 +588,8 @@ class DeviceCard(CardWidget):
         self._port_combo.setEnabled(True)
         self._baud_combo.setEnabled(True)
         self._parser_combo.setEnabled(True)
+        self._name_label.set_editable(True)
+        self._advanced_btn.setEnabled(True)
         self._set_measurement_enabled(False)
         self._manager.remove_worker(self._config.device_id)
         self.worker = None
@@ -334,6 +605,8 @@ class DeviceCard(CardWidget):
         self._port_combo.setEnabled(True)
         self._baud_combo.setEnabled(True)
         self._parser_combo.setEnabled(True)
+        self._name_label.set_editable(True)
+        self._advanced_btn.setEnabled(True)
         InfoBar.error(
             title="串口错误",
             content=f"[{self._config.name}] {msg}",
@@ -342,13 +615,36 @@ class DeviceCard(CardWidget):
             parent=self.window(),
         )
 
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        super().mousePressEvent(event)
+    def _on_drag_started(self, drag: QDrag) -> None:
+        """手柄触发拖拽时，填充 MimeData 和预览图。"""
+        mime = QMimeData()
+        mime.setData("application/x-device-id", self._config.device_id.encode("utf-8"))
+        drag.setMimeData(mime)
+        pixmap = self.grab()
+        transparent = QPixmap(pixmap.size())
+        transparent.fill(Qt.GlobalColor.transparent)
+        from PySide6.QtGui import QPainter
+
+        painter = QPainter(transparent)
+        painter.setOpacity(0.7)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.end()
+        drag.setPixmap(transparent)
+        drag.setHotSpot(self._drag_handle.pos())
+
+    def mousePressEvent(self, e) -> None:  # type: ignore[override]
+        super().mousePressEvent(e)
         self.device_selected.emit(self._config.device_id)
 
     # ------------------------------------------------------------------ #
     # 槽 — 测量操作
     # ------------------------------------------------------------------ #
+
+    @Slot()
+    def _on_cmd_changed(self) -> None:
+        """用户修改读取指令后同步到 config 并通知面板持久化。"""
+        self._config.read_cmd_hex = self._cmd_edit.text().strip()
+        self.cmd_changed.emit(self._config.device_id, self._config.read_cmd_hex)
 
     def _build_read_frame(self) -> bytes | None:
         """将命令输入框内容解析为带CRC的完整帧，失败返回 None。"""
@@ -417,7 +713,7 @@ class DeviceCard(CardWidget):
 
 
 class DeviceListPanel(QWidget):
-    """左侧设备列表面板，支持选中高亮和动态增删。"""
+    """左侧设备列表面板，支持选中高亮、动态增删和拖拽排序。"""
 
     device_selected = Signal(str)
 
@@ -426,14 +722,17 @@ class DeviceListPanel(QWidget):
         device_configs: list[DeviceConfig],
         manager: SerialManager,
         repository: BaseRepository | None = None,
+        db_repo: SQLAlchemyRepository | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._cards: dict[str, DeviceCard] = {}
         self._selected_id: str | None = None
         self._manager = manager
-        self._repository = repository
-        self._container_layout: QVBoxLayout | None = None
+        self._repository = repository  # 帧存储（传给 SerialWorker）
+        self._db_repo = db_repo  # 设备配置存储
+        self._container_layout: QVBoxLayout
+        self._scroll_container: QWidget
         self._build_ui(device_configs)
 
     def _build_ui(self, device_configs: list[DeviceConfig]) -> None:
@@ -467,10 +766,15 @@ class DeviceListPanel(QWidget):
 
         container = QWidget()
         container.setStyleSheet("background: transparent;")
+        container.setAcceptDrops(True)
+        container.dragEnterEvent = self._drag_enter_event  # type: ignore[method-assign]
+        container.dragMoveEvent = self._drag_move_event  # type: ignore[method-assign]
+        container.dropEvent = self._drop_event  # type: ignore[method-assign]
         layout = QVBoxLayout(container)
         layout.setSpacing(10)
         layout.setContentsMargins(12, 4, 12, 12)
         self._container_layout = layout
+        self._scroll_container = container
 
         for cfg in device_configs:
             self._insert_card(cfg)
@@ -482,10 +786,81 @@ class DeviceListPanel(QWidget):
         card = DeviceCard(cfg, self._manager, self._repository)
         card.device_selected.connect(self._on_card_selected)
         card.remove_requested.connect(self.remove_device)
+        card.cmd_changed.connect(self._on_card_cmd_changed)
+        card.port_config_changed.connect(self._on_port_config_changed)
         insert_pos = max(self._container_layout.count() - 1, 0)
         self._container_layout.insertWidget(insert_pos, card)
         self._cards[cfg.device_id] = card
         return card
+
+    def _sort_order(self, device_id: str) -> int:
+        """返回指定设备在当前列表中的顺序索引。"""
+        return list(self._cards.keys()).index(device_id) if device_id in self._cards else 0
+
+    # ------------------------------------------------------------------ #
+    # 拖拽排序
+    # ------------------------------------------------------------------ #
+
+    def _drag_enter_event(self, event) -> None:
+        if event.mimeData().hasFormat("application/x-device-id"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def _drag_move_event(self, event) -> None:
+        if event.mimeData().hasFormat("application/x-device-id"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def _drop_event(self, event) -> None:
+        if not event.mimeData().hasFormat("application/x-device-id"):
+            event.ignore()
+            return
+        device_id = event.mimeData().data("application/x-device-id").data().decode("utf-8")
+        cards_list = list(self._cards.values())
+        src_idx = next((i for i, c in enumerate(cards_list) if c._config.device_id == device_id), None)
+        if src_idx is None:
+            event.ignore()
+            return
+        drop_pos = event.position().toPoint()
+        target_idx = self._calc_drop_index(drop_pos, cards_list)
+        if src_idx == target_idx or src_idx + 1 == target_idx:
+            event.acceptProposedAction()
+            return
+        # 重排 _cards（OrderedDict 语义：先删再插）
+        card = cards_list.pop(src_idx)
+        if target_idx > src_idx:
+            target_idx -= 1
+        cards_list.insert(target_idx, card)
+        self._cards = {c._config.device_id: c for c in cards_list}
+        self._rebuild_layout()
+        self._save_sort_orders()
+        event.acceptProposedAction()
+
+    def _calc_drop_index(self, pos, cards_list: list) -> int:
+        for i, card in enumerate(cards_list):
+            if pos.y() < card.geometry().center().y():
+                return i
+        return len(cards_list)
+
+    def _rebuild_layout(self) -> None:
+        """按 _cards 当前顺序重建 layout。"""
+        while self._container_layout.count() > 0:
+            item = self._container_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(self._scroll_container)  # 临时归属，避免销毁
+        for card in self._cards.values():
+            self._container_layout.addWidget(card)
+        self._container_layout.addStretch()
+
+    def _save_sort_orders(self) -> None:
+        if self._db_repo is None:
+            return
+        for i, card in enumerate(self._cards.values()):
+            asyncio.create_task(
+                self._db_repo.save_device(card._config, card._config.read_cmd_hex, i, card._config.port_config)
+            )
 
     # ------------------------------------------------------------------ #
     # 公共方法
@@ -496,6 +871,9 @@ class DeviceListPanel(QWidget):
             device_id = f"device_{uuid.uuid4().hex[:6]}"
             cfg = DeviceConfig(device_id=device_id, name=f"设备 {len(self._cards) + 1}")
         self._insert_card(cfg)
+        if self._db_repo is not None:
+            order = self._sort_order(cfg.device_id)
+            asyncio.create_task(self._db_repo.save_device(cfg, cfg.read_cmd_hex, order))
         return cfg.device_id
 
     @Slot(str)
@@ -507,6 +885,8 @@ class DeviceListPanel(QWidget):
             asyncio.create_task(card.worker.disconnect())
         self._container_layout.removeWidget(card)
         card.deleteLater()
+        if self._db_repo is not None:
+            asyncio.create_task(self._db_repo.delete_device(device_id))
         if self._selected_id == device_id:
             self._selected_id = None
             self.device_selected.emit(device_id)
@@ -525,6 +905,28 @@ class DeviceListPanel(QWidget):
     @Slot()
     def _on_add_clicked(self) -> None:
         self.add_device()
+
+    @Slot(str, str)
+    def _on_card_cmd_changed(self, device_id: str, new_hex: str) -> None:
+        if self._db_repo is None:
+            return
+        card = self._cards.get(device_id)
+        if card is None:
+            return
+        asyncio.create_task(
+            self._db_repo.save_device(card._config, new_hex, self._sort_order(device_id), card._config.port_config)
+        )
+
+    @Slot(str, object)
+    def _on_port_config_changed(self, device_id: str, port_config) -> None:
+        if self._db_repo is None:
+            return
+        card = self._cards.get(device_id)
+        if card is None:
+            return
+        asyncio.create_task(
+            self._db_repo.save_device(card._config, card._config.read_cmd_hex, self._sort_order(device_id), port_config)
+        )
 
     @Slot(str)
     def _on_card_selected(self, device_id: str) -> None:

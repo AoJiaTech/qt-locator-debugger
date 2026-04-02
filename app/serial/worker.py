@@ -129,7 +129,7 @@ class SerialWorker(QObject):
                 logger.debug(f"[{self.device_id}|{self.config.port}] RX {chunk.hex(' ').upper()}")
                 self.frame_received.emit(frame)
                 if parsed and self._repository:
-                    asyncio.create_task(self._repository.save(self.device_id, frame))
+                    asyncio.create_task(self._repository.save(self.device_id, frame, self.config.port))
         except asyncio.CancelledError:
             pass
         except Exception as e:

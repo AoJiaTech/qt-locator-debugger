@@ -29,12 +29,14 @@ class _MainPage(QWidget):
         self,
         manager: SerialManager,
         repository: SQLAlchemyRepository,
+        initial_devices: list[DeviceConfig],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("mainPage")
         self._manager = manager
         self._repository = repository
+        self._initial_devices = initial_devices
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -47,9 +49,10 @@ class _MainPage(QWidget):
         splitter.setStyleSheet("QSplitter::handle { background: rgba(0,0,0,0.08); }")
 
         self._device_list = DeviceListPanel(
-            DEFAULT_DEVICES,
+            self._initial_devices,
             self._manager,
-            self._repository,
+            repository=self._repository,  # 帧存储
+            db_repo=self._repository,  # 设备配置存储
         )
         self._device_list.setFixedWidth(272)
         self._device_list.device_selected.connect(self._on_device_selected)
@@ -78,7 +81,7 @@ class _MainPage(QWidget):
 class MainWindow(FluentWindow):
     """主窗口。"""
 
-    def __init__(self) -> None:
+    def __init__(self, initial_devices: list[DeviceConfig]) -> None:
         super().__init__()
         self.setWindowTitle("串口设备调试工具")
         self.resize(1280, 760)
@@ -86,7 +89,7 @@ class MainWindow(FluentWindow):
         self._manager = SerialManager()
         self._repository = SQLAlchemyRepository()
 
-        self._main_page = _MainPage(self._manager, self._repository)
+        self._main_page = _MainPage(self._manager, self._repository, initial_devices)
         self._setup_navigation()
 
     @property

@@ -11,7 +11,7 @@ class Direction(Enum):
 @dataclass
 class PortConfig:
     port: str
-    baudrate: int = 115200
+    baudrate: int = 9600
     bytesize: int = 8
     parity: str = "N"
     stopbits: float = 1.0
@@ -40,3 +40,4 @@ class DeviceConfig:
     name: str  # 显示名称，如 "传感器 A"
     port_config: PortConfig | None = None  # 当前绑定的串口；None 表示未配置
     parser_name: str = "Raw Hex"  # 对应 BUILTIN_PARSERS 中的键
+    read_cmd_hex: str = "01 03 00 0D 00 04"  # 读取指令 HEX，不含CRC
