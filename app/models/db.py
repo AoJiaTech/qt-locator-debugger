@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Text, Float, String, Integer, DateTime
+from sqlalchemy import Text, Float, String, Integer, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, DeclarativeBase, mapped_column
 
 
@@ -38,3 +38,27 @@ class ParsedRecord(Base):
     raw_hex: Mapped[str] = mapped_column(Text)  # 原始字节的十六进制字符串
     parsed_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 字符串
     timestamp: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class MeasurementSession(Base):
+    __tablename__ = "measurement_sessions"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(64), index=True)
+    mode: Mapped[str] = mapped_column(String(8))
+    start_time: Mapped[datetime] = mapped_column(DateTime)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    cycle_count: Mapped[int] = mapped_column(Integer, default=0)
+    step_period_s: Mapped[float] = mapped_column(Float)
+    sample_interval_ms: Mapped[int] = mapped_column(Integer)
+    displacement_peak_mm: Mapped[float] = mapped_column(Float)
+
+
+class MeasurementPoint(Base):
+    __tablename__ = "measurement_points"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("measurement_sessions.id"), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, index=True)
+    step_index: Mapped[int] = mapped_column(Integer)
+    current_pct: Mapped[float] = mapped_column(Float)
+    distance_pct: Mapped[float] = mapped_column(Float)
+    distance_mm: Mapped[float] = mapped_column(Float)
