@@ -1,14 +1,7 @@
 import asyncio
 
 from PySide6.QtCore import Qt, Slot
-from PySide6.QtWidgets import (
-    QLabel,
-    QWidget,
-    QSplitter,
-    QHBoxLayout,
-    QSizePolicy,
-    QVBoxLayout,
-)
+from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout, QSizePolicy, QVBoxLayout
 from qfluentwidgets import (
     SpinBox,
     ComboBox,
@@ -24,31 +17,11 @@ from qfluentwidgets import (
 )
 
 from app.logger import logger
-from app.serial.worker import SerialWorker
+from app.measurement.controller import MeasurementController
 from app.models.domain import Frame, Direction
-
-
-class ChartPlaceholder(QWidget):
-    """上半图表占位区，后续调用 set_chart_widget() 插入实际图表。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        lbl = QLabel("[ 数据图表区 — 待接入 ]")
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        lbl.setStyleSheet(
-            "color: #999; font-size: 13px; border: 1.5px dashed #ddd; border-radius: 8px; background: transparent;"
-        )
-        layout.addWidget(lbl)
-        self._label = lbl
-        self._content_layout = layout
-
-    def set_chart_widget(self, widget: QWidget) -> None:
-        self._label.hide()
-        self._content_layout.addWidget(widget)
+from app.serial.worker import SerialWorker
+from app.storage.repository import SQLAlchemyRepository
+from app.ui.measurement_panel import MeasurementPanel
 
 
 class SendPanel(CardWidget):
@@ -246,9 +219,12 @@ class DevicePanel(QWidget):
     右侧主面板：上半图表区 + 下半多串口 Tab 收发区。
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, repository: SQLAlchemyRepository | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._tabs: dict[str, PortTab] = {}
+        self._chart_panels: dict[str, MeasurementPanel] = {}
+        self._controllers: dict[str, MeasurementController] = {}
+        self._repository = repository
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -259,9 +235,10 @@ class DevicePanel(QWidget):
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setHandleWidth(6)
 
-        # 上半：图表占位区
-        self.chart = ChartPlaceholder()
-        splitter.addWidget(self.chart)
+        # 上半：图表 Tab 区（每个连接设备一个 Tab）
+        self._chart_tabs = TabWidget()
+        self._chart_tabs.setMovable(True)
+        splitter.addWidget(self._chart_tabs)
 
         # 下半：Tab 收发区
         self._tab_widget = TabWidget()
@@ -275,30 +252,66 @@ class DevicePanel(QWidget):
     # 公共接口
     # ------------------------------------------------------------------ #
 
-    def add_tab(self, device_id: str, label: str, worker: SerialWorker) -> None:
+    def add_tab(self, device_id: str, label: str, worker: SerialWorker, read_cmd_hex: str = "") -> None:
         if device_id in self._tabs:
             self._tab_widget.setCurrentWidget(self._tabs[device_id])
+            panel = self._chart_panels.get(device_id)
+            if panel is not None:
+                self._chart_tabs.setCurrentWidget(panel)
             return
+
         tab = PortTab(worker)
         self._tabs[device_id] = tab
         self._tab_widget.addTab(tab, label, FluentIcon.IOT)
         self._tab_widget.setCurrentWidget(tab)
 
+        panel = MeasurementPanel()
+        controller = MeasurementController(
+            worker=worker,
+            read_cmd_hex=read_cmd_hex,
+            repository=self._repository,
+        )
+        panel.set_controller(controller)
+        self._chart_panels[device_id] = panel
+        self._controllers[device_id] = controller
+        self._chart_tabs.addTab(panel, label, FluentIcon.IOT)
+        self._chart_tabs.setCurrentWidget(panel)
+
     def remove_tab(self, device_id: str) -> None:
+        controller = self._controllers.pop(device_id, None)
+        if controller is not None:
+            controller.stop()
+
+        panel = self._chart_panels.pop(device_id, None)
+        if panel is not None:
+            panel.detach_controller()
+            for i in range(self._chart_tabs.count()):
+                if self._chart_tabs.widget(i) is panel:
+                    self._chart_tabs.removeTab(i)
+                    break
+            panel.deleteLater()
+
         tab = self._tabs.pop(device_id, None)
         if tab is None:
             return
         tab.detach_worker()
-        idx = -1
         for i in range(self._tab_widget.count()):
             if self._tab_widget.widget(i) is tab:
-                idx = i
+                self._tab_widget.removeTab(i)
                 break
-        if idx >= 0:
-            self._tab_widget.removeTab(idx)
         tab.deleteLater()
 
     def switch_to(self, device_id: str) -> None:
         tab = self._tabs.get(device_id)
         if tab:
             self._tab_widget.setCurrentWidget(tab)
+        panel = self._chart_panels.get(device_id)
+        if panel:
+            self._chart_tabs.setCurrentWidget(panel)
+
+    def start_measurement(self, device_id: str, mode: str = "single") -> None:
+        panel = self._chart_panels.get(device_id)
+        if panel is None:
+            return
+        self._chart_tabs.setCurrentWidget(panel)
+        panel.start(mode)
