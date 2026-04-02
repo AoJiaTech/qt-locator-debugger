@@ -176,5 +176,8 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python
 
 .claude/
+.superpowers/
+docs/superpowers/
+.worktrees/
 logs/
 data.db
