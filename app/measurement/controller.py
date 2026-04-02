@@ -1,0 +1,234 @@
+"""测量控制器：驱动阶跃指令发送和距离采样，发出信号给 UI 层。"""
+
+import asyncio
+from datetime import datetime
+
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
+
+from app.logger import logger
+from app.models.domain import Direction, Frame
+from app.serial.worker import SerialWorker
+from app.storage.repository import SQLAlchemyRepository
+from app.utils import build_modbus_frame
+
+_STEP_PAYLOADS: list[tuple[float, bytes]] = [
+    (0.0, build_modbus_frame(bytes.fromhex("010600000190"))),
+    (25.0, build_modbus_frame(bytes.fromhex("010600000320"))),
+    (50.0, build_modbus_frame(bytes.fromhex("0106000004B0"))),
+    (75.0, build_modbus_frame(bytes.fromhex("010600000640"))),
+    (100.0, build_modbus_frame(bytes.fromhex("0106000007D0"))),
+    (0.0, build_modbus_frame(bytes.fromhex("010600000190"))),
+]
+
+
+class MeasurementController(QObject):
+    """驱动阶跃测量流程的控制器。"""
+
+    step_changed = Signal(int, float)
+    sample_ready = Signal(float, float, float, float)
+    measurement_finished = Signal(int, float)
+    error_occurred = Signal(str)
+
+    _LOCK_MS = 100
+
+    def __init__(
+        self,
+        worker: SerialWorker,
+        read_cmd_hex: str,
+        repository: SQLAlchemyRepository | None = None,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._worker = worker
+        self._read_cmd_hex = read_cmd_hex
+        self._repository = repository
+
+        self.step_period_s = 2.0
+        self.sample_interval_ms = 200
+        self.displacement_peak_mm = 50.0
+
+        self._active = False
+        self._mode = "single"
+        self._current_step = 0
+        self._current_pct = 0.0
+        self._cycle_count = 0
+        self._start_time: datetime | None = None
+        self._session_id: int | None = None
+        self._locked = False
+        self._point_buffer: list[dict] = []
+
+        self._step_timer = QTimer(self)
+        self._step_timer.timeout.connect(self._on_step_timer)
+
+        self._sample_timer = QTimer(self)
+        self._sample_timer.timeout.connect(self._on_sample_timer)
+
+        self._lock_timer = QTimer(self)
+        self._lock_timer.setSingleShot(True)
+        self._lock_timer.timeout.connect(self._release_lock)
+
+        self._worker.frame_received.connect(self._on_frame_received)
+
+    def start(self, mode: str) -> None:
+        if self._active:
+            return
+        self._active = True
+        self._mode = mode
+        self._current_step = 0
+        self._current_pct = 0.0
+        self._cycle_count = 0
+        self._start_time = datetime.now()
+        self._session_id = None
+        self._locked = False
+        self._point_buffer = []
+
+        self._send_step()
+        self._step_timer.start(int(self.step_period_s * 1000))
+        self._sample_timer.start(self.sample_interval_ms)
+
+        if self._repository is not None:
+            asyncio.create_task(self._create_db_session())
+
+        logger.info(
+            f"[{self._worker.device_id}] 开始测量 mode={mode}, "
+            f"step_period={self.step_period_s}s, sample_interval={self.sample_interval_ms}ms"
+        )
+
+    def stop(self) -> None:
+        if not self._active:
+            return
+        self._active = False
+        self._step_timer.stop()
+        self._sample_timer.stop()
+        self._lock_timer.stop()
+
+        duration_s = 0.0
+        if self._start_time is not None:
+            duration_s = (datetime.now() - self._start_time).total_seconds()
+        self.measurement_finished.emit(self._cycle_count, duration_s)
+
+        if self._repository is not None and self._session_id is not None:
+            asyncio.create_task(self._flush_and_finish())
+
+        logger.info(f"[{self._worker.device_id}] 结束测量 cycles={self._cycle_count}")
+
+    @Slot()
+    def _on_step_timer(self) -> None:
+        if not self._active:
+            return
+
+        self._current_step += 1
+        if self._current_step >= len(_STEP_PAYLOADS):
+            self._current_step = 0
+            self._cycle_count += 1
+            if self._mode == "single":
+                self.stop()
+                return
+
+        self._send_step()
+
+    @Slot()
+    def _on_sample_timer(self) -> None:
+        if not self._active or self._locked:
+            return
+
+        hex_text = self._read_cmd_hex.replace(" ", "").replace(":", "")
+        if not hex_text:
+            return
+
+        try:
+            payload = bytes.fromhex(hex_text)
+        except ValueError as e:
+            msg = f"读取指令格式错误: {e}"
+            logger.error(msg)
+            self.error_occurred.emit(msg)
+            self.stop()
+            return
+
+        asyncio.create_task(self._worker.send(build_modbus_frame(payload)))
+
+    @Slot()
+    def _release_lock(self) -> None:
+        self._locked = False
+
+    @Slot(Frame)
+    def _on_frame_received(self, frame: Frame) -> None:
+        if not self._active or frame.direction != Direction.RX:
+            return
+
+        parsed = frame.parsed
+        if not parsed or parsed.get("type") != "distance":
+            return
+
+        distance_mm = float(parsed["distance_mm"])
+        peak = self.displacement_peak_mm
+        distance_pct = min(100.0, distance_mm / peak * 100.0) if peak > 0 else 0.0
+        elapsed_s = 0.0
+        if self._start_time is not None:
+            elapsed_s = (frame.timestamp - self._start_time).total_seconds()
+
+        self.sample_ready.emit(elapsed_s, self._current_pct, distance_pct, distance_mm)
+
+        self._point_buffer.append(
+            {
+                "session_id": self._session_id,
+                "timestamp": frame.timestamp,
+                "step_index": self._current_step,
+                "current_pct": self._current_pct,
+                "distance_pct": distance_pct,
+                "distance_mm": distance_mm,
+            }
+        )
+        if len(self._point_buffer) >= 10 and self._repository is not None and self._session_id is not None:
+            asyncio.create_task(self._flush_points())
+
+    def _send_step(self) -> None:
+        current_pct, payload = _STEP_PAYLOADS[self._current_step]
+        self._current_pct = current_pct
+        self._locked = True
+        self._lock_timer.start(self._LOCK_MS)
+        asyncio.create_task(self._worker.send(payload))
+        self.step_changed.emit(self._current_step, current_pct)
+
+    async def _create_db_session(self) -> None:
+        if self._repository is None:
+            return
+        try:
+            self._session_id = await self._repository.create_session(
+                device_id=self._worker.device_id,
+                mode=self._mode,
+                step_period_s=self.step_period_s,
+                sample_interval_ms=self.sample_interval_ms,
+                displacement_peak_mm=self.displacement_peak_mm,
+            )
+            for point in self._point_buffer:
+                point["session_id"] = self._session_id
+        except Exception as e:
+            logger.error(f"[{self._worker.device_id}] 创建测量 session 失败: {e}")
+            self.error_occurred.emit(f"创建测量 session 失败: {e}")
+
+    async def _flush_points(self) -> None:
+        if self._repository is None or self._session_id is None:
+            return
+
+        points = [point for point in self._point_buffer if point["session_id"] is not None]
+        self._point_buffer.clear()
+        if not points:
+            return
+
+        try:
+            await self._repository.add_points(points)
+        except Exception as e:
+            logger.error(f"[{self._worker.device_id}] 写入测量点失败: {e}")
+            self.error_occurred.emit(f"写入测量点失败: {e}")
+
+    async def _flush_and_finish(self) -> None:
+        await self._flush_points()
+        if self._repository is None or self._session_id is None:
+            return
+
+        try:
+            await self._repository.finish_session(self._session_id, self._cycle_count)
+        except Exception as e:
+            logger.error(f"[{self._worker.device_id}] 更新测量 session 失败: {e}")
+            self.error_occurred.emit(f"更新测量 session 失败: {e}")
