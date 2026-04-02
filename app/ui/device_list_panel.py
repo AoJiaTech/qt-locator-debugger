@@ -22,6 +22,7 @@ from qfluentwidgets import (
     CardWidget,
     FluentIcon,
     PushButton,
+    PrimaryPushButton,
     ScrollArea,
     ToolButton,
     CaptionLabel,
@@ -304,6 +305,7 @@ class DeviceCard(CardWidget):
 
     device_selected = Signal(str)  # device_id
     remove_requested = Signal(str)  # device_id
+    measure_requested = Signal(str)  # device_id
     cmd_changed = Signal(str, str)  # device_id, new_hex
     port_config_changed = Signal(str, object)  # device_id, PortConfig | None
 
@@ -422,6 +424,10 @@ class DeviceCard(CardWidget):
         btn_row.addWidget(self._read_btn)
         root.addLayout(btn_row)
 
+        self._measure_btn = PrimaryPushButton(FluentIcon.PLAY, "开始测量")
+        self._measure_btn.clicked.connect(lambda: self.measure_requested.emit(self._config.device_id))
+        root.addWidget(self._measure_btn)
+
         self._set_measurement_enabled(False)
 
     @staticmethod
@@ -467,6 +473,7 @@ class DeviceCard(CardWidget):
     def _set_measurement_enabled(self, enabled: bool) -> None:
         self._zero_btn.setEnabled(enabled)
         self._read_btn.setEnabled(enabled)
+        self._measure_btn.setEnabled(enabled)
 
     # ------------------------------------------------------------------ #
     # 选中高亮
@@ -716,6 +723,7 @@ class DeviceListPanel(QWidget):
     """左侧设备列表面板，支持选中高亮、动态增删和拖拽排序。"""
 
     device_selected = Signal(str)
+    measure_requested = Signal(str)
 
     def __init__(
         self,
@@ -764,12 +772,15 @@ class DeviceListPanel(QWidget):
         scroll.setStyleSheet("ScrollArea { border: none; background: transparent; }")
         outer.addWidget(scroll)
 
+        viewport = scroll.viewport()
+        viewport.setAcceptDrops(True)
+        viewport.dragEnterEvent = self._drag_enter_event  # type: ignore[method-assign]
+        viewport.dragMoveEvent = self._drag_move_event  # type: ignore[method-assign]
+        viewport.dropEvent = self._drop_event  # type: ignore[method-assign]
+        self._scroll_viewport = viewport
+
         container = QWidget()
         container.setStyleSheet("background: transparent;")
-        container.setAcceptDrops(True)
-        container.dragEnterEvent = self._drag_enter_event  # type: ignore[method-assign]
-        container.dragMoveEvent = self._drag_move_event  # type: ignore[method-assign]
-        container.dropEvent = self._drop_event  # type: ignore[method-assign]
         layout = QVBoxLayout(container)
         layout.setSpacing(10)
         layout.setContentsMargins(12, 4, 12, 12)
@@ -786,6 +797,7 @@ class DeviceListPanel(QWidget):
         card = DeviceCard(cfg, self._manager, self._repository)
         card.device_selected.connect(self._on_card_selected)
         card.remove_requested.connect(self.remove_device)
+        card.measure_requested.connect(self.measure_requested)
         card.cmd_changed.connect(self._on_card_cmd_changed)
         card.port_config_changed.connect(self._on_port_config_changed)
         insert_pos = max(self._container_layout.count() - 1, 0)

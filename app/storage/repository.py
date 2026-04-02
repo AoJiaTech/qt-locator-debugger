@@ -6,7 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from alembic import command
-from app.models.db import DeviceRecord, ParsedRecord
+from app.models.db import DeviceRecord, ParsedRecord, MeasurementSession, MeasurementPoint
 from app.models.domain import Frame, PortConfig, DeviceConfig
 
 
@@ -122,4 +122,46 @@ class SQLAlchemyRepository(BaseRepository):
         """删除一条设备配置。"""
         async with self._session_factory() as session:
             await session.execute(delete(DeviceRecord).where(DeviceRecord.device_id == device_id))
+            await session.commit()
+
+    async def create_session(
+        self,
+        device_id: str,
+        mode: str,
+        step_period_s: float,
+        sample_interval_ms: int,
+        displacement_peak_mm: float,
+    ) -> int:
+        from datetime import datetime
+
+        record = MeasurementSession(
+            device_id=device_id,
+            mode=mode,
+            start_time=datetime.now(),
+            cycle_count=0,
+            step_period_s=step_period_s,
+            sample_interval_ms=sample_interval_ms,
+            displacement_peak_mm=displacement_peak_mm,
+        )
+        async with self._session_factory() as session:
+            session.add(record)
+            await session.commit()
+            await session.refresh(record)
+            return record.id
+
+    async def finish_session(self, session_id: int, cycle_count: int) -> None:
+        from datetime import datetime
+        from sqlalchemy import update
+
+        async with self._session_factory() as session:
+            await session.execute(
+                update(MeasurementSession)
+                .where(MeasurementSession.id == session_id)
+                .values(end_time=datetime.now(), cycle_count=cycle_count)
+            )
+            await session.commit()
+
+    async def add_points(self, points: list[dict]) -> None:
+        async with self._session_factory() as session:
+            session.add_all([MeasurementPoint(**p) for p in points])
             await session.commit()

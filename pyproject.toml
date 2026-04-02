@@ -12,6 +12,7 @@ dependencies = [
     "alembic>=1.13",
     "aiosqlite>=0.20",
     "pyside6-fluent-widgets[full]>=1.11.1",
+    "pyqtgraph>=0.13",
 ]
 
 [tool.isort]
