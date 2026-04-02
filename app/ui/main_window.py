@@ -56,9 +56,10 @@ class _MainPage(QWidget):
         )
         self._device_list.setFixedWidth(272)
         self._device_list.device_selected.connect(self._on_device_selected)
+        self._device_list.measure_requested.connect(self._on_measure_requested)
         splitter.addWidget(self._device_list)
 
-        self._device_panel = DevicePanel()
+        self._device_panel = DevicePanel(repository=self._repository)
         splitter.addWidget(self._device_panel)
 
         splitter.setSizes([272, 928])
@@ -73,9 +74,31 @@ class _MainPage(QWidget):
         cfg = self._device_list.get_config(device_id)
         name = cfg.name if cfg else device_id
         if worker:
-            self._device_panel.add_tab(device_id, f"{name}  [{worker.config.port}]", worker)
+            read_cmd_hex = cfg.read_cmd_hex if cfg else ""
+            self._device_panel.add_tab(
+                device_id,
+                f"{name}  [{worker.config.port}]",
+                worker,
+                read_cmd_hex=read_cmd_hex,
+            )
         else:
             self._device_panel.remove_tab(device_id)
+
+    @Slot(str)
+    def _on_measure_requested(self, device_id: str) -> None:
+        worker = self._manager.get_worker(device_id)
+        if worker is None:
+            return
+        cfg = self._device_list.get_config(device_id)
+        name = cfg.name if cfg else device_id
+        read_cmd_hex = cfg.read_cmd_hex if cfg else ""
+        self._device_panel.add_tab(
+            device_id,
+            f"{name}  [{worker.config.port}]",
+            worker,
+            read_cmd_hex=read_cmd_hex,
+        )
+        self._device_panel.start_measurement(device_id, mode="single")
 
 
 class MainWindow(FluentWindow):
