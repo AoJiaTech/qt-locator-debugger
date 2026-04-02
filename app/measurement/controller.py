@@ -17,6 +17,9 @@ _STEP_PAYLOADS: list[tuple[float, bytes]] = [
     (50.0, build_modbus_frame(bytes.fromhex("0106000004B0"))),
     (75.0, build_modbus_frame(bytes.fromhex("010600000640"))),
     (100.0, build_modbus_frame(bytes.fromhex("0106000007D0"))),
+    (75.0, build_modbus_frame(bytes.fromhex("010600000640"))),
+    (50.0, build_modbus_frame(bytes.fromhex("0106000004B0"))),
+    (25.0, build_modbus_frame(bytes.fromhex("010600000320"))),
     (0.0, build_modbus_frame(bytes.fromhex("010600000190"))),
 ]
 
@@ -55,6 +58,8 @@ class MeasurementController(QObject):
         self._start_time: datetime | None = None
         self._session_id: int | None = None
         self._locked = False
+        self._awaiting_distance_response = False
+        self._last_send_at: datetime | None = None
         self._point_buffer: list[dict] = []
 
         self._step_timer = QTimer(self)
@@ -80,6 +85,8 @@ class MeasurementController(QObject):
         self._start_time = datetime.now()
         self._session_id = None
         self._locked = False
+        self._awaiting_distance_response = False
+        self._last_send_at = None
         self._point_buffer = []
 
         self._send_step()
@@ -101,6 +108,7 @@ class MeasurementController(QObject):
         self._step_timer.stop()
         self._sample_timer.stop()
         self._lock_timer.stop()
+        self._awaiting_distance_response = False
 
         duration_s = 0.0
         if self._start_time is not None:
@@ -129,8 +137,12 @@ class MeasurementController(QObject):
 
     @Slot()
     def _on_sample_timer(self) -> None:
-        if not self._active or self._locked:
+        if not self._active or self._locked or self._awaiting_distance_response:
             return
+        if self._last_send_at is not None:
+            elapsed_ms = (datetime.now() - self._last_send_at).total_seconds() * 1000
+            if elapsed_ms < max(self._LOCK_MS, 150):
+                return
 
         hex_text = self._read_cmd_hex.replace(" ", "").replace(":", "")
         if not hex_text:
@@ -145,6 +157,8 @@ class MeasurementController(QObject):
             self.stop()
             return
 
+        self._awaiting_distance_response = True
+        self._last_send_at = datetime.now()
         asyncio.create_task(self._worker.send(build_modbus_frame(payload)))
 
     @Slot()
@@ -160,6 +174,7 @@ class MeasurementController(QObject):
         if not parsed or parsed.get("type") != "distance":
             return
 
+        self._awaiting_distance_response = False
         distance_mm = float(parsed["distance_mm"])
         peak = self.displacement_peak_mm
         distance_pct = min(100.0, distance_mm / peak * 100.0) if peak > 0 else 0.0
@@ -186,6 +201,8 @@ class MeasurementController(QObject):
         current_pct, payload = _STEP_PAYLOADS[self._current_step]
         self._current_pct = current_pct
         self._locked = True
+        self._awaiting_distance_response = False
+        self._last_send_at = datetime.now()
         self._lock_timer.start(self._LOCK_MS)
         asyncio.create_task(self._worker.send(payload))
         self.step_changed.emit(self._current_step, current_pct)

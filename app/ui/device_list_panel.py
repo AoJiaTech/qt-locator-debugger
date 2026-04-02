@@ -772,12 +772,15 @@ class DeviceListPanel(QWidget):
         scroll.setStyleSheet("ScrollArea { border: none; background: transparent; }")
         outer.addWidget(scroll)
 
+        viewport = scroll.viewport()
+        viewport.setAcceptDrops(True)
+        viewport.dragEnterEvent = self._drag_enter_event  # type: ignore[method-assign]
+        viewport.dragMoveEvent = self._drag_move_event  # type: ignore[method-assign]
+        viewport.dropEvent = self._drop_event  # type: ignore[method-assign]
+        self._scroll_viewport = viewport
+
         container = QWidget()
         container.setStyleSheet("background: transparent;")
-        container.setAcceptDrops(True)
-        container.dragEnterEvent = self._drag_enter_event  # type: ignore[method-assign]
-        container.dragMoveEvent = self._drag_move_event  # type: ignore[method-assign]
-        container.dropEvent = self._drop_event  # type: ignore[method-assign]
         layout = QVBoxLayout(container)
         layout.setSpacing(10)
         layout.setContentsMargins(12, 4, 12, 12)

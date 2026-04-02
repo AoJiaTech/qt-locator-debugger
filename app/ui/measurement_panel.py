@@ -103,11 +103,13 @@ class MeasurementPanel(QWidget):
         self._plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self._plot_widget.setLabel("left", "百分比 (%)")
         self._plot_widget.setLabel("bottom", "时间 (s)")
-        self._plot_widget.setYRange(0, 110)
+        self._plot_widget.setYRange(0, 105, padding=0)
+        self._plot_widget.setLimits(xMin=0, yMin=0, yMax=105)
+        self._plot_widget.setMouseEnabled(x=True, y=False)
         self._plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._plot_widget.addLegend(offset=(10, 10))
         self._curve_current = self._plot_widget.plot(
-            [], [], pen=pg.mkPen(color="#89b4fa", width=2), name="电流阶跃 %"
+            [], [], pen=pg.mkPen(color="#89b4fa", width=2), name="电流阶跃 %", stepMode="right"
         )
         self._curve_distance = self._plot_widget.plot(
             [], [], pen=pg.mkPen(color="#a6e3a1", width=2), name="位移 %"
@@ -203,6 +205,7 @@ class MeasurementPanel(QWidget):
 
         self._curve_current.setData(self._time_data, self._current_data)
         self._curve_distance.setData(self._time_data, self._distance_data)
+        self._plot_widget.setXRange(0, max(1.0, elapsed_s), padding=0)
 
         mins = int(elapsed_s) // 60
         secs = int(elapsed_s) % 60
