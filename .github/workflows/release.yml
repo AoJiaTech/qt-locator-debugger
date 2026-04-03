@@ -80,6 +80,7 @@ jobs:
           mode: ${{ steps.nuitka-config.outputs.MODE }}
           script-name: main.py
           enable-plugins: pyside6
+          args: --include-package-data=qfluentwidgets
           
       - name: Package artifact (Linux/macOS)
         if: runner.os != 'Windows'
