@@ -52,7 +52,6 @@ jobs:
         with:
           nuitka-version: main
           script-name: main.py
-          mode: standalone
           enable-plugins: pyside6
           onefile: true
           
