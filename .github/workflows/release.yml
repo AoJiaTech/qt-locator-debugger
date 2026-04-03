@@ -1,0 +1,64 @@
+name: Cross-Platform Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: Build on ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python pin 3.10
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install pyside6 nuitka
+
+      # === 根据不同操作系统，执行专属的 Nuitka 打包命令 ===
+      
+      - name: Build for Windows
+        if: runner.os == 'Windows'
+        run: uv run nuitka --standalone --plugin-enable=pyside6 --windows-disable-console --windows-icon-from-ico=app.ico main.py
+
+      - name: Build for macOS
+        if: runner.os == 'macOS'
+        run: uv run nuitka --standalone --plugin-enable=pyside6 --macos-disable-console --macos-create-app-bundle --macos-app-icon=icon.icns main.py
+
+      - name: Build for Linux
+        if: runner.os == 'Linux'
+        run: uv run nuitka --standalone --plugin-enable=pyside6 --linux-icon=icon.png main.py
+
+      
+      - name: Package Windows and Linux
+        if: runner.os != 'macOS'
+        run: uv run python -m zipfile -c locator-debugger-${{ runner.os }}.zip main.dist
+
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: uv run python -m zipfile -c locator-debugger-${{ runner.os }}.zip main.app
+
+      
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: locator-debugger-${{ runner.os }}.zip
+          append_body: true 
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
