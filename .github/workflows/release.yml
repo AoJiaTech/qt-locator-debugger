@@ -58,7 +58,7 @@ jobs:
         uses: Nuitka/Nuitka-Action@main
         with:
           nuitka-version: main
-          mode: onefile
+          mode: app
           script-name: main.py
           enable-plugins: pyside6
           
