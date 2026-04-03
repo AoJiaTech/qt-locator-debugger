@@ -51,9 +51,9 @@ jobs:
         uses: Nuitka/Nuitka-Action@main
         with:
           nuitka-version: main
+          mode: onefile
           script-name: main.py
           enable-plugins: pyside6
-          onefile: true
           
       - name: Rename and zip artifact (Linux/macOS)
         if: runner.os != 'Windows'
