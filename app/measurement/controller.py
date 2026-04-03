@@ -286,7 +286,7 @@ class MeasurementController(QObject):
                     self._repository.set_session_baseline(self._session_id, distance_mm)
                 )
 
-        relative_mm = distance_mm - self._baseline_distance_mm
+        relative_mm = self._baseline_distance_mm - distance_mm
         peak = self.displacement_peak_mm
         distance_pct = min(100.0, relative_mm / peak * 100.0) if peak > 0 else 0.0
 

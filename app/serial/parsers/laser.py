@@ -111,7 +111,8 @@ class LaserDisplacementParser(BaseParser):
         if byte_count == 8 and len(payload) == 8:
             # 响应示例：01 03 08 40 9F BA 0B 00 00 00 00 41 45
             # payload[0:4] 为 IEEE 754 大端浮点测量值，payload[4:8] 保留
-            distance_mm = struct.unpack(">f", payload[0:4])[0]
+            raw_distance = struct.unpack(">f", payload[0:4])[0]
+            distance_mm = 4.375 * (raw_distance - 4)
             return {
                 "type": "distance",
                 "addr": addr,
