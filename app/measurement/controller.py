@@ -3,13 +3,13 @@
 import asyncio
 from datetime import datetime
 
-from PySide6.QtCore import QObject, QTimer, Signal, Slot
+from PySide6.QtCore import Slot, QTimer, Signal, QObject
 
 from app.logger import logger
-from app.models.domain import Direction, Frame
-from app.serial.worker import SerialWorker
-from app.storage.repository import SQLAlchemyRepository
 from app.utils import build_modbus_frame
+from app.serial.worker import SerialWorker
+from app.models.domain import Frame, Direction
+from app.storage.repository import SQLAlchemyRepository
 
 _STEP_PAYLOADS: list[tuple[float, bytes]] = [
     (0.0, build_modbus_frame(bytes.fromhex("010600000190"))),
@@ -185,8 +185,7 @@ class MeasurementController(QObject):
         self._sample_timer.start(self.sample_interval_ms)
 
         logger.info(
-            f"[{self._worker.device_id}] 恢复测量 session_id={session_id}, "
-            f"step={step_index}, time_offset={time_offset}"
+            f"[{self._worker.device_id}] 恢复测量 session_id={session_id}, step={step_index}, time_offset={time_offset}"
         )
 
     @Slot()
@@ -282,9 +281,7 @@ class MeasurementController(QObject):
         if self._baseline_distance_mm is None:
             self._baseline_distance_mm = distance_mm
             if self._repository is not None and self._session_id is not None:
-                asyncio.create_task(
-                    self._repository.set_session_baseline(self._session_id, distance_mm)
-                )
+                asyncio.create_task(self._repository.set_session_baseline(self._session_id, distance_mm))
 
         relative_mm = self._baseline_distance_mm - distance_mm
         peak = self.displacement_peak_mm

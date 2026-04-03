@@ -1,18 +1,19 @@
 """测量面板：参数设置行 + PyQtGraph 波形图 + 状态栏。"""
 
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Slot
-from PySide6.QtWidgets import QFileDialog, QDoubleSpinBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QWidget, QFileDialog, QHBoxLayout, QSizePolicy, QVBoxLayout, QDoubleSpinBox
 from qfluentwidgets import (
+    SpinBox,
     BodyLabel,
-    CaptionLabel,
     CardWidget,
     FluentIcon,
-    PrimaryPushButton,
     PushButton,
-    SpinBox,
+    CaptionLabel,
+    PrimaryPushButton,
 )
 
 if TYPE_CHECKING:
@@ -141,9 +142,7 @@ class MeasurementPanel(QWidget):
         self._curve_current = self._plot_widget.plot(
             [], [], pen=pg.mkPen(color="#89b4fa", width=2), name="电流阶跃 %", stepMode="right"
         )
-        self._curve_distance = self._plot_widget.plot(
-            [], [], pen=pg.mkPen(color="#a6e3a1", width=2), name="位移 %"
-        )
+        self._curve_distance = self._plot_widget.plot([], [], pen=pg.mkPen(color="#a6e3a1", width=2), name="位移 %")
         root.addWidget(self._plot_widget, stretch=1)
 
         status_layout = QHBoxLayout()
@@ -163,7 +162,7 @@ class MeasurementPanel(QWidget):
         status_layout.addStretch()
         root.addLayout(status_layout)
 
-    def set_controller(self, controller: "MeasurementController") -> None:
+    def set_controller(self, controller: MeasurementController) -> None:
         self._controller = controller
         controller.step_changed.connect(self._on_step_changed)
         controller.sample_ready.connect(self._on_sample_ready)

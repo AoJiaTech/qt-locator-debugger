@@ -22,7 +22,6 @@ from qfluentwidgets import (
     CardWidget,
     FluentIcon,
     PushButton,
-    PrimaryPushButton,
     ScrollArea,
     ToolButton,
     CaptionLabel,
@@ -32,6 +31,7 @@ from qfluentwidgets import (
     InfoBarPosition,
     LargeTitleLabel,
     StrongBodyLabel,
+    PrimaryPushButton,
     TransparentToolButton,
 )
 

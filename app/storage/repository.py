@@ -2,12 +2,12 @@ import json
 from abc import ABC, abstractmethod
 
 from alembic.config import Config
-from sqlalchemy import delete, desc, select, update
+from sqlalchemy import desc, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from alembic import command
-from app.models.db import DeviceRecord, ParsedRecord, MeasurementSession, MeasurementPoint
 from app.models.domain import Frame, PortConfig, DeviceConfig
+from app.models.db import DeviceRecord, ParsedRecord, MeasurementPoint, MeasurementSession
 
 
 class BaseRepository(ABC):
@@ -172,9 +172,7 @@ class SQLAlchemyRepository(BaseRepository):
     async def resume_session(self, session_id: int) -> None:
         async with self._session_factory() as session:
             await session.execute(
-                update(MeasurementSession)
-                .where(MeasurementSession.id == session_id)
-                .values(paused_step_index=None)
+                update(MeasurementSession).where(MeasurementSession.id == session_id).values(paused_step_index=None)
             )
             await session.commit()
 

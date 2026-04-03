@@ -17,11 +17,11 @@ from qfluentwidgets import (
 )
 
 from app.logger import logger
-from app.measurement.controller import MeasurementController
-from app.models.domain import Frame, Direction
 from app.serial.worker import SerialWorker
-from app.storage.repository import SQLAlchemyRepository
+from app.models.domain import Frame, Direction
 from app.ui.measurement_panel import MeasurementPanel
+from app.storage.repository import SQLAlchemyRepository
+from app.measurement.controller import MeasurementController
 
 
 class SendPanel(CardWidget):

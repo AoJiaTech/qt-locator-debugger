@@ -1,25 +1,25 @@
 """历史测量查询页。"""
 
 import asyncio
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
+from datetime import datetime
+from dataclasses import dataclass
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QSizePolicy, QVBoxLayout
 from qfluentwidgets import (
-    BodyLabel,
-    CaptionLabel,
-    CardWidget,
-    ComboBox,
-    FluentIcon,
     InfoBar,
-    InfoBarPosition,
-    PrimaryPushButton,
+    ComboBox,
+    BodyLabel,
+    CardWidget,
+    FluentIcon,
     PushButton,
     ScrollArea,
+    CaptionLabel,
+    InfoBarPosition,
     StrongBodyLabel,
+    PrimaryPushButton,
 )
 
 from app.serial.manager import SerialManager
@@ -91,12 +91,13 @@ class _SessionCard(CardWidget):
         if self._session.end_time is None:
             unfinished = CaptionLabel("未完成")
             unfinished.setStyleSheet(
-                "background-color: rgba(255, 165, 0, 0.18); color: #fab387; "
-                "padding: 2px 8px; border-radius: 8px;"
+                "background-color: rgba(255, 165, 0, 0.18); color: #fab387; padding: 2px 8px; border-radius: 8px;"
             )
             layout.addWidget(unfinished, alignment=Qt.AlignmentFlag.AlignLeft)
         else:
-            layout.addWidget(CaptionLabel(f"时长: {self._format_duration(self._session.start_time, self._session.end_time)}"))
+            layout.addWidget(
+                CaptionLabel(f"时长: {self._format_duration(self._session.start_time, self._session.end_time)}")
+            )
 
         layout.addStretch()
 
@@ -229,9 +230,7 @@ class HistoryPage(QWidget):
         self._curve_current = self._plot_widget.plot(
             [], [], pen=pg.mkPen(color="#89b4fa", width=2), name="电流阶跃 %", stepMode="right"
         )
-        self._curve_distance = self._plot_widget.plot(
-            [], [], pen=pg.mkPen(color="#a6e3a1", width=2), name="位移 %"
-        )
+        self._curve_distance = self._plot_widget.plot([], [], pen=pg.mkPen(color="#a6e3a1", width=2), name="位移 %")
         bottom_layout.addWidget(self._plot_widget, stretch=1)
 
         button_row = QHBoxLayout()
@@ -295,7 +294,9 @@ class HistoryPage(QWidget):
             )
             self._session_states[session.id] = state
             card = _SessionCard(state)
-            card.session_selected.connect(lambda session_id, sid=session.id: asyncio.create_task(self._select_session(sid)))
+            card.session_selected.connect(
+                lambda session_id, sid=session.id: asyncio.create_task(self._select_session(sid))
+            )
             self._cards[session.id] = card
             self._session_layout.insertWidget(self._session_layout.count() - 1, card)
 
@@ -333,7 +334,8 @@ class HistoryPage(QWidget):
         status_text = "未完成" if session.end_time is None else "已完成"
         self._selection_label.setText(f"当前会话: {device_name} / {self._mode_text(session.mode)} / {status_text}")
         self._meta_label.setText(
-            f"参数: 周期 {session.step_period_s:g}s, 采样 {session.sample_interval_ms}ms, 峰值 {session.displacement_peak_mm:g}mm"
+            f"参数: 周期 {session.step_period_s:g}s, 采样 {session.sample_interval_ms}ms,"
+            f" 峰值 {session.displacement_peak_mm:g}mm"
         )
 
     def _build_resume_payload(self, session, points) -> dict[str, Any]:
@@ -358,7 +360,9 @@ class HistoryPage(QWidget):
             "sample_interval_ms": int(session.sample_interval_ms),
             "displacement_peak_mm": float(session.displacement_peak_mm),
             "mode": str(session.mode),
-            "baseline_distance_mm": float(session.baseline_distance_mm) if session.baseline_distance_mm is not None else None,
+            "baseline_distance_mm": float(session.baseline_distance_mm)
+            if session.baseline_distance_mm is not None
+            else None,
         }
 
     def _render_points(self, points) -> None:
