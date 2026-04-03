@@ -98,6 +98,17 @@ class MeasurementPanel(QWidget):
 
         root.addWidget(params_card)
 
+        info_layout = QHBoxLayout()
+        info_layout.setContentsMargins(8, 2, 8, 2)
+        info_layout.setSpacing(32)
+
+        self._cycle_lbl = BodyLabel("周期: —")
+        self._duration_lbl = BodyLabel("运行时间: —")
+        info_layout.addWidget(self._cycle_lbl)
+        info_layout.addWidget(self._duration_lbl)
+        info_layout.addStretch()
+        root.addLayout(info_layout)
+
         self._plot_widget = pg.PlotWidget()
         self._plot_widget.setBackground("#11111b")
         self._plot_widget.showGrid(x=True, y=True, alpha=0.3)
@@ -123,12 +134,6 @@ class MeasurementPanel(QWidget):
         self._status_lbl = CaptionLabel("● 待机")
         self._status_lbl.setStyleSheet("color: #585b70;")
         status_layout.addWidget(self._status_lbl)
-
-        self._cycle_lbl = CaptionLabel("周期: —")
-        status_layout.addWidget(self._cycle_lbl)
-
-        self._duration_lbl = CaptionLabel("时长: —")
-        status_layout.addWidget(self._duration_lbl)
 
         self._current_val_lbl = CaptionLabel("电流: —")
         status_layout.addWidget(self._current_val_lbl)
@@ -209,7 +214,7 @@ class MeasurementPanel(QWidget):
 
         mins = int(elapsed_s) // 60
         secs = int(elapsed_s) % 60
-        self._duration_lbl.setText(f"时长: {mins:02d}:{secs:02d}")
+        self._duration_lbl.setText(f"运行时间: {mins:02d}:{secs:02d}")
         self._distance_val_lbl.setText(f"位移: {distance_pct:.1f}% ({distance_mm:.2f}mm)")
 
     @Slot(int, float)
@@ -237,8 +242,8 @@ class MeasurementPanel(QWidget):
         self._curve_distance.setData([], [])
         self._current_val_lbl.setText("电流: —")
         self._distance_val_lbl.setText("位移: —")
-        self._cycle_lbl.setText("周期: 0")
-        self._duration_lbl.setText("时长: 00:00")
+        self._cycle_lbl.setText("周期: —")
+        self._duration_lbl.setText("运行时间: —")
 
     def _set_running(self, running: bool) -> None:
         self._period_spin.setEnabled(not running)
