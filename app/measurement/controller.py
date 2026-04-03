@@ -27,7 +27,7 @@ _STEP_PAYLOADS: list[tuple[float, bytes]] = [
 class MeasurementController(QObject):
     """驱动阶跃测量流程的控制器。"""
 
-    step_changed = Signal(int, float)
+    step_changed = Signal(int, float, int)  # step_index, current_pct, cycle_count
     sample_ready = Signal(float, float, float, float)
     measurement_finished = Signal(int, float)
     error_occurred = Signal(str)
@@ -214,7 +214,7 @@ class MeasurementController(QObject):
         self._last_send_at = datetime.now()
         self._lock_timer.start(self._LOCK_MS)
         asyncio.create_task(self._worker.send(payload))
-        self.step_changed.emit(self._current_step, current_pct)
+        self.step_changed.emit(self._current_step, current_pct, self._cycle_count)
 
     async def _create_db_session(self) -> None:
         if self._repository is None:

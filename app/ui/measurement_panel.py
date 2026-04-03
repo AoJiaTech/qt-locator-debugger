@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pyqtgraph as pg
 from PySide6.QtCore import Slot
-from PySide6.QtWidgets import QFileDialog, QDoubleSpinBox, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QDoubleSpinBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -60,7 +60,7 @@ class MeasurementPanel(QWidget):
         self._sample_spin.setRange(100, 5000)
         self._sample_spin.setValue(200)
         self._sample_spin.setSingleStep(100)
-        self._sample_spin.setFixedWidth(80)
+        self._sample_spin.setFixedWidth(160)
         params_layout.addWidget(self._sample_spin)
         params_layout.addWidget(CaptionLabel("ms"))
 
@@ -102,8 +102,12 @@ class MeasurementPanel(QWidget):
         info_layout.setContentsMargins(8, 2, 8, 2)
         info_layout.setSpacing(32)
 
-        self._cycle_lbl = BodyLabel("周期: —")
-        self._duration_lbl = BodyLabel("运行时间: —")
+        _INFO_STYLE = "font-size: 42px; font-weight: 600; color: #D91E28;"
+
+        self._cycle_lbl = QLabel("周期: —")
+        self._cycle_lbl.setStyleSheet(_INFO_STYLE)
+        self._duration_lbl = QLabel("运行时间: —")
+        self._duration_lbl.setStyleSheet(_INFO_STYLE)
         info_layout.addWidget(self._cycle_lbl)
         info_layout.addWidget(self._duration_lbl)
         info_layout.addStretch()
@@ -198,9 +202,10 @@ class MeasurementPanel(QWidget):
         exporter = ImageExporter(self._plot_widget.plotItem)
         exporter.export(path)
 
-    @Slot(int, float)
-    def _on_step_changed(self, _step_index: int, current_pct: float) -> None:
+    @Slot(int, float, int)
+    def _on_step_changed(self, _step_index: int, current_pct: float, cycle_count: int) -> None:
         self._current_val_lbl.setText(f"电流: {current_pct:.0f}%")
+        self._cycle_lbl.setText(f"周期: {cycle_count}")
 
     @Slot(float, float, float, float)
     def _on_sample_ready(self, elapsed_s: float, current_pct: float, distance_pct: float, distance_mm: float) -> None:
