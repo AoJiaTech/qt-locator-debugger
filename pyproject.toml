@@ -35,3 +35,8 @@ ignore = ["E402", "C901"]
 pythonVersion = "3.14"
 pythonPlatform = "All"
 typeCheckingMode = "standard"
+
+[dependency-groups]
+dev = [
+    "nuitka>=4.0.7",
+]

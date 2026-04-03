@@ -136,6 +136,12 @@ wheels = [
 ]
 
 [[package]]
+name = "nuitka"
+version = "4.0.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/0e/2537066db2458843e4a1edfc524409069ad58a456fc4b312b18b1d327431/nuitka-4.0.7.tar.gz", hash = "sha256:26543bfed6009a466ae8608bdc643add81a497e8662e4aaf157cd00aa7fd5b9f", size = 4421537, upload-time = "2026-03-24T13:26:43.368Z" }
+
+[[package]]
 name = "numpy"
 version = "2.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2754,6 +2760,11 @@ dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "nuitka" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
@@ -2765,6 +2776,9 @@ requires-dist = [
     { name = "pyside6-fluent-widgets", extras = ["full"], specifier = ">=1.11.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "nuitka", specifier = ">=4.0.7" }]
 
 [[package]]
 name = "scipy"
