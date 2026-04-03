@@ -61,6 +61,7 @@ class MeasurementController(QObject):
         self._awaiting_distance_response = False
         self._last_send_at: datetime | None = None
         self._point_buffer: list[dict] = []
+        self._baseline_distance_mm: float | None = None
 
         self._step_timer = QTimer(self)
         self._step_timer.timeout.connect(self._on_step_timer)
@@ -88,6 +89,7 @@ class MeasurementController(QObject):
         self._awaiting_distance_response = False
         self._last_send_at = None
         self._point_buffer = []
+        self._baseline_distance_mm = None
 
         self._send_step()
         self._step_timer.start(int(self.step_period_s * 1000))
@@ -176,13 +178,20 @@ class MeasurementController(QObject):
 
         self._awaiting_distance_response = False
         distance_mm = float(parsed["distance_mm"])
+
+        # 首帧建立归零基准
+        if self._baseline_distance_mm is None:
+            self._baseline_distance_mm = distance_mm
+
+        relative_mm = distance_mm - self._baseline_distance_mm
         peak = self.displacement_peak_mm
-        distance_pct = min(100.0, distance_mm / peak * 100.0) if peak > 0 else 0.0
+        distance_pct = min(100.0, relative_mm / peak * 100.0) if peak > 0 else 0.0
+
         elapsed_s = 0.0
         if self._start_time is not None:
             elapsed_s = (frame.timestamp - self._start_time).total_seconds()
 
-        self.sample_ready.emit(elapsed_s, self._current_pct, distance_pct, distance_mm)
+        self.sample_ready.emit(elapsed_s, self._current_pct, distance_pct, relative_mm)
 
         self._point_buffer.append(
             {
@@ -191,7 +200,7 @@ class MeasurementController(QObject):
                 "step_index": self._current_step,
                 "current_pct": self._current_pct,
                 "distance_pct": distance_pct,
-                "distance_mm": distance_mm,
+                "distance_mm": relative_mm,
             }
         )
         if len(self._point_buffer) >= 10 and self._repository is not None and self._session_id is not None:
