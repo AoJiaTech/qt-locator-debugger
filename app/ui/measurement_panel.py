@@ -1,9 +1,9 @@
 """测量面板：参数设置行 + PyQtGraph 波形图 + 状态栏。"""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 import pyqtgraph as pg
-from PySide6.QtCore import Slot
+from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import QFileDialog, QDoubleSpinBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -29,10 +29,14 @@ class MeasurementPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._controller: MeasurementController | None = None
+        self._history_time_data: list[float] = []
+        self._history_current_data: list[float] = []
+        self._history_distance_data: list[float] = []
         self._time_data: list[float] = []
         self._current_data: list[float] = []
         self._distance_data: list[float] = []
         self._last_mode = "single"
+        self._is_paused = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -85,7 +89,13 @@ class MeasurementPanel(QWidget):
         self._auto_btn.clicked.connect(self._on_auto)
         params_layout.addWidget(self._auto_btn)
 
-        self._stop_btn = PushButton(FluentIcon.PAUSE, "停止")
+        self._pause_btn = PushButton(FluentIcon.PAUSE, "暂停")
+        self._pause_btn.setFixedWidth(88)
+        self._pause_btn.setEnabled(False)
+        self._pause_btn.clicked.connect(self._on_pause_resume)
+        params_layout.addWidget(self._pause_btn)
+
+        self._stop_btn = PushButton(FluentIcon.CANCEL, "停止")
         self._stop_btn.setFixedWidth(88)
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self._on_stop)
@@ -123,6 +133,11 @@ class MeasurementPanel(QWidget):
         self._plot_widget.setMouseEnabled(x=True, y=False)
         self._plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._plot_widget.addLegend(offset=(10, 10))
+        history_pen = pg.mkPen(color="#6c7086", width=2, style=Qt.PenStyle.DashLine)
+        self._history_curve_current = self._plot_widget.plot(
+            [], [], pen=history_pen, name="历史电流阶跃 %", stepMode="right"
+        )
+        self._history_curve_distance = self._plot_widget.plot([], [], pen=history_pen, name="历史位移 %")
         self._curve_current = self._plot_widget.plot(
             [], [], pen=pg.mkPen(color="#89b4fa", width=2), name="电流阶跃 %", stepMode="right"
         )
@@ -153,6 +168,7 @@ class MeasurementPanel(QWidget):
         controller.step_changed.connect(self._on_step_changed)
         controller.sample_ready.connect(self._on_sample_ready)
         controller.measurement_finished.connect(self._on_measurement_finished)
+        controller.measurement_paused.connect(self._on_measurement_paused)
 
     def detach_controller(self) -> None:
         if self._controller is None:
@@ -161,6 +177,7 @@ class MeasurementPanel(QWidget):
             self._controller.step_changed.disconnect(self._on_step_changed)
             self._controller.sample_ready.disconnect(self._on_sample_ready)
             self._controller.measurement_finished.disconnect(self._on_measurement_finished)
+            self._controller.measurement_paused.disconnect(self._on_measurement_paused)
         except RuntimeError:
             pass
         self._controller = None
@@ -174,6 +191,49 @@ class MeasurementPanel(QWidget):
         self._set_running(True)
         self._controller.start(mode, baseline_mm=baseline_mm)
 
+    def start_from_session(
+        self,
+        session_id: int,
+        step_index: int,
+        cycle_count: int,
+        time_offset: float,
+        history_time: Sequence[float],
+        history_current: Sequence[float],
+        history_distance: Sequence[float],
+        step_period_s: float,
+        sample_interval_ms: int,
+        displacement_peak_mm: float,
+        mode: str = "auto",
+        baseline_distance_mm: float | None = None,
+    ) -> None:
+        if self._controller is None:
+            return
+
+        self._last_mode = mode
+        self._period_spin.setValue(step_period_s)
+        self._sample_spin.setValue(sample_interval_ms)
+        self._peak_spin.setValue(displacement_peak_mm)
+        self._apply_params_to_controller()
+
+        self._reset_plot(clear_history=True)
+        self._history_time_data = list(history_time)
+        self._history_current_data = list(history_current)
+        self._history_distance_data = list(history_distance)
+        self._history_curve_current.setData(self._history_time_data, self._history_current_data)
+        self._history_curve_distance.setData(self._history_time_data, self._history_distance_data)
+        self._curve_current.setData([], [])
+        self._curve_distance.setData([], [])
+        self._update_plot_range()
+        self._set_running(True)
+        self._controller.resume(
+            session_id=session_id,
+            step_index=step_index,
+            time_offset=time_offset,
+            mode=mode,
+            cycle_count=cycle_count,
+            baseline_distance_mm=baseline_distance_mm,
+        )
+
     @Slot()
     def _on_single(self) -> None:
         self.start("single")
@@ -181,6 +241,29 @@ class MeasurementPanel(QWidget):
     @Slot()
     def _on_auto(self) -> None:
         self.start("auto")
+
+    @Slot()
+    def _on_pause_resume(self) -> None:
+        if self._controller is None:
+            return
+        if self._is_paused:
+            session_id = getattr(self._controller, "_session_id", None)
+            step_index = getattr(self._controller, "_current_step", 0)
+            cycle_count = getattr(self._controller, "_cycle_count", 0)
+            if session_id is None:
+                return
+            self._apply_params_to_controller()
+            self._set_paused(False)
+            self._controller.resume(
+                session_id=session_id,
+                step_index=step_index,
+                time_offset=self._current_time_offset(),
+                mode=self._last_mode,
+                cycle_count=cycle_count,
+                baseline_distance_mm=getattr(self._controller, "_baseline_distance_mm", None),
+            )
+            return
+        self._controller.pause()
 
     @Slot()
     def _on_stop(self) -> None:
@@ -215,21 +298,17 @@ class MeasurementPanel(QWidget):
 
         self._curve_current.setData(self._time_data, self._current_data)
         self._curve_distance.setData(self._time_data, self._distance_data)
-        self._plot_widget.setXRange(0, max(1.0, elapsed_s), padding=0)
-
-        hours = int(elapsed_s) // 3600
-        mins = (int(elapsed_s) % 3600) // 60
-        secs = int(elapsed_s) % 60
-        if hours > 0:
-            self._duration_lbl.setText(f"运行时间: {hours}时{mins}分{secs}秒")
-        elif mins > 0:
-            self._duration_lbl.setText(f"运行时间: {mins}分{secs}秒")
-        else:
-            self._duration_lbl.setText(f"运行时间: {secs}秒")
+        self._update_plot_range(elapsed_s)
+        self._update_duration_label(elapsed_s)
         self._distance_val_lbl.setText(f"位移: {distance_pct:.1f}% ({distance_mm:.2f}mm)")
 
+    @Slot()
+    def _on_measurement_paused(self) -> None:
+        self._set_paused(True)
+        self._update_duration_label(self._current_time_offset())
+
     @Slot(int, float)
-    def _on_measurement_finished(self, cycle_count: int, _duration_s: float) -> None:
+    def _on_measurement_finished(self, cycle_count: int, duration_s: float) -> None:
         self._set_running(False)
         if self._last_mode == "single":
             self._status_lbl.setText("● 单次完成")
@@ -237,6 +316,7 @@ class MeasurementPanel(QWidget):
             self._status_lbl.setText("● 自动已停止")
         self._status_lbl.setStyleSheet("color: #a6adc8;")
         self._cycle_lbl.setText(f"周期: {cycle_count}")
+        self._update_duration_label(duration_s)
 
     def _apply_params_to_controller(self) -> None:
         if self._controller is None:
@@ -245,24 +325,78 @@ class MeasurementPanel(QWidget):
         self._controller.sample_interval_ms = self._sample_spin.value()
         self._controller.displacement_peak_mm = self._peak_spin.value()
 
-    def _reset_plot(self) -> None:
+    def _reset_plot(self, clear_history: bool = True) -> None:
+        if clear_history:
+            self._history_time_data.clear()
+            self._history_current_data.clear()
+            self._history_distance_data.clear()
+            self._history_curve_current.setData([], [])
+            self._history_curve_distance.setData([], [])
         self._time_data.clear()
         self._current_data.clear()
         self._distance_data.clear()
         self._curve_current.setData([], [])
         self._curve_distance.setData([], [])
+        self._plot_widget.setXRange(0, 1.0, padding=0)
         self._current_val_lbl.setText("电流: —")
         self._distance_val_lbl.setText("位移: —")
         self._cycle_lbl.setText("周期: —")
         self._duration_lbl.setText("运行时间: —")
 
     def _set_running(self, running: bool) -> None:
+        self._is_paused = False
         self._period_spin.setEnabled(not running)
         self._sample_spin.setEnabled(not running)
         self._peak_spin.setEnabled(not running)
         self._single_btn.setEnabled(not running)
         self._auto_btn.setEnabled(not running)
+        self._pause_btn.setEnabled(running)
+        self._pause_btn.setText("暂停")
         self._stop_btn.setEnabled(running)
         if running:
             self._status_lbl.setText("● 测量中")
             self._status_lbl.setStyleSheet("color: #a6e3a1;")
+        else:
+            self._status_lbl.setText("● 待机")
+            self._status_lbl.setStyleSheet("color: #585b70;")
+
+    def _set_paused(self, paused: bool) -> None:
+        self._is_paused = paused
+        session_active = self._stop_btn.isEnabled() or paused
+        self._period_spin.setEnabled(False if session_active else True)
+        self._sample_spin.setEnabled(False if session_active else True)
+        self._peak_spin.setEnabled(False if session_active else True)
+        self._single_btn.setEnabled(not session_active)
+        self._auto_btn.setEnabled(not session_active)
+        self._pause_btn.setEnabled(session_active)
+        self._stop_btn.setEnabled(session_active)
+        self._pause_btn.setText("继续" if paused else "暂停")
+        if paused:
+            self._status_lbl.setText("● 已暂停")
+            self._status_lbl.setStyleSheet("color: #f9e2af;")
+        elif session_active:
+            self._status_lbl.setText("● 测量中")
+            self._status_lbl.setStyleSheet("color: #a6e3a1;")
+
+    def _current_time_offset(self) -> float:
+        if self._time_data:
+            return self._time_data[-1]
+        if self._history_time_data:
+            return self._history_time_data[-1]
+        return 0.0
+
+    def _update_duration_label(self, elapsed_s: float) -> None:
+        total_seconds = max(0, int(elapsed_s))
+        hours = total_seconds // 3600
+        mins = (total_seconds % 3600) // 60
+        secs = total_seconds % 60
+        if hours > 0:
+            self._duration_lbl.setText(f"运行时间: {hours}时{mins}分{secs}秒")
+        elif mins > 0:
+            self._duration_lbl.setText(f"运行时间: {mins}分{secs}秒")
+        else:
+            self._duration_lbl.setText(f"运行时间: {secs}秒")
+
+    def _update_plot_range(self, elapsed_s: float | None = None) -> None:
+        max_time = elapsed_s if elapsed_s is not None else self._current_time_offset()
+        self._plot_widget.setXRange(0, max(1.0, max_time), padding=0)

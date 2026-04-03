@@ -2,7 +2,7 @@ import json
 from abc import ABC, abstractmethod
 
 from alembic.config import Config
-from sqlalchemy import delete, select
+from sqlalchemy import delete, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from alembic import command
@@ -151,7 +151,6 @@ class SQLAlchemyRepository(BaseRepository):
 
     async def finish_session(self, session_id: int, cycle_count: int) -> None:
         from datetime import datetime
-        from sqlalchemy import update
 
         async with self._session_factory() as session:
             await session.execute(
@@ -160,6 +159,64 @@ class SQLAlchemyRepository(BaseRepository):
                 .values(end_time=datetime.now(), cycle_count=cycle_count)
             )
             await session.commit()
+
+    async def pause_session(self, session_id: int, step_index: int) -> None:
+        async with self._session_factory() as session:
+            await session.execute(
+                update(MeasurementSession)
+                .where(MeasurementSession.id == session_id)
+                .values(paused_step_index=step_index)
+            )
+            await session.commit()
+
+    async def resume_session(self, session_id: int) -> None:
+        async with self._session_factory() as session:
+            await session.execute(
+                update(MeasurementSession)
+                .where(MeasurementSession.id == session_id)
+                .values(paused_step_index=None)
+            )
+            await session.commit()
+
+    async def set_session_baseline(self, session_id: int, baseline_mm: float) -> None:
+        async with self._session_factory() as session:
+            await session.execute(
+                update(MeasurementSession)
+                .where(MeasurementSession.id == session_id)
+                .values(baseline_distance_mm=baseline_mm)
+            )
+            await session.commit()
+
+    async def get_session(self, session_id: int) -> MeasurementSession | None:
+        async with self._session_factory() as session:
+            return await session.get(MeasurementSession, session_id)
+
+    async def get_session_points(self, session_id: int) -> list[MeasurementPoint]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(MeasurementPoint)
+                .where(MeasurementPoint.session_id == session_id)
+                .order_by(MeasurementPoint.timestamp)
+            )
+            return result.scalars().all()
+
+    async def list_sessions(
+        self,
+        device_id: str | None = None,
+        mode: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[MeasurementSession]:
+        async with self._session_factory() as session:
+            stmt = select(MeasurementSession)
+            if device_id is not None:
+                stmt = stmt.where(MeasurementSession.device_id == device_id)
+            if mode is not None:
+                stmt = stmt.where(MeasurementSession.mode == mode)
+            result = await session.execute(
+                stmt.order_by(desc(MeasurementSession.start_time)).limit(limit).offset(offset)
+            )
+            return result.scalars().all()
 
     async def add_points(self, points: list[dict]) -> None:
         async with self._session_factory() as session:

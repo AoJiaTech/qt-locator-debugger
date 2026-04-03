@@ -315,3 +315,38 @@ class DevicePanel(QWidget):
             return
         self._chart_tabs.setCurrentWidget(panel)
         panel.start(mode, baseline_mm=baseline_mm)
+
+    def start_from_session(
+        self,
+        device_id: str,
+        session_id: int,
+        step_index: int,
+        cycle_count: int,
+        time_offset: float,
+        history_time: list[float],
+        history_current: list[float],
+        history_distance: list[float],
+        step_period_s: float,
+        sample_interval_ms: int,
+        displacement_peak_mm: float,
+        mode: str = "auto",
+        baseline_distance_mm: float | None = None,
+    ) -> None:
+        panel = self._chart_panels.get(device_id)
+        if panel is None:
+            return
+        self._chart_tabs.setCurrentWidget(panel)
+        panel.start_from_session(
+            session_id=session_id,
+            step_index=step_index,
+            cycle_count=cycle_count,
+            time_offset=time_offset,
+            history_time=history_time,
+            history_current=history_current,
+            history_distance=history_distance,
+            step_period_s=step_period_s,
+            sample_interval_ms=sample_interval_ms,
+            displacement_peak_mm=displacement_peak_mm,
+            mode=mode,
+            baseline_distance_mm=baseline_distance_mm,
+        )

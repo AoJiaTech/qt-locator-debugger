@@ -30,6 +30,7 @@ class MeasurementController(QObject):
     step_changed = Signal(int, float, int)  # step_index, current_pct, cycle_count
     sample_ready = Signal(float, float, float, float)
     measurement_finished = Signal(int, float)
+    measurement_paused = Signal()
     error_occurred = Signal(str)
 
     _LOCK_MS = 100
@@ -51,6 +52,7 @@ class MeasurementController(QObject):
         self.displacement_peak_mm = 50.0
 
         self._active = False
+        self._paused = False
         self._mode = "single"
         self._current_step = 0
         self._current_pct = 0.0
@@ -58,6 +60,7 @@ class MeasurementController(QObject):
         self._cycle_count = 0
         self._start_time: datetime | None = None
         self._session_id: int | None = None
+        self._time_offset: float = 0.0
         self._locked = False
         self._awaiting_distance_response = False
         self._last_send_at: datetime | None = None
@@ -80,6 +83,7 @@ class MeasurementController(QObject):
         if self._active:
             return
         self._active = True
+        self._paused = False
         self._mode = mode
         self._current_step = 0
         self._current_pct = 0.0
@@ -87,6 +91,7 @@ class MeasurementController(QObject):
         self._cycle_count = 0
         self._start_time = datetime.now()
         self._session_id = None
+        self._time_offset = 0.0
         self._locked = False
         self._awaiting_distance_response = False
         self._last_send_at = None
@@ -106,28 +111,96 @@ class MeasurementController(QObject):
         )
 
     def stop(self) -> None:
-        if not self._active:
+        if not self._active and not self._paused:
             return
         self._active = False
+        self._paused = False
         self._step_timer.stop()
         self._sample_timer.stop()
         self._lock_timer.stop()
         self._awaiting_distance_response = False
 
-        duration_s = 0.0
+        duration_s = self._time_offset
         if self._start_time is not None:
-            duration_s = (datetime.now() - self._start_time).total_seconds()
+            duration_s += (datetime.now() - self._start_time).total_seconds()
         self.measurement_finished.emit(self._cycle_count, duration_s)
 
         if self._repository is not None and self._session_id is not None:
-            asyncio.create_task(self._flush_and_finish())
+            asyncio.create_task(self._pause_then_flush_and_finish())
 
         logger.info(f"[{self._worker.device_id}] 结束测量 cycles={self._cycle_count}")
+
+    def pause(self) -> None:
+        if not self._active:
+            return
+
+        self._active = False
+        self._paused = True
+        self._step_timer.stop()
+        self._sample_timer.stop()
+        self._lock_timer.stop()
+        self._awaiting_distance_response = False
+
+        if self._repository is not None and self._session_id is not None:
+            asyncio.create_task(self._flush_points())
+            asyncio.create_task(self._repository.pause_session(self._session_id, self._current_step))
+
+        self.measurement_paused.emit()
+        logger.info(f"[{self._worker.device_id}] 暂停测量 step={self._current_step}")
+
+    def resume(
+        self,
+        session_id: int,
+        step_index: int,
+        time_offset: float,
+        mode: str | None = None,
+        cycle_count: int | None = None,
+        baseline_distance_mm: float | None = None,
+    ) -> None:
+        if self._active:
+            return
+
+        self._active = True
+        self._paused = False
+        self._session_id = session_id
+        self._current_step = step_index
+        self._time_offset = time_offset
+        if mode is not None:
+            self._mode = mode
+        if cycle_count is not None:
+            self._cycle_count = cycle_count
+        self._start_time = datetime.now()
+        self._locked = False
+        self._awaiting_distance_response = False
+        self._pending_pct = None
+        self._last_send_at = None
+        self._point_buffer = []
+        self._baseline_distance_mm = baseline_distance_mm
+
+        if self._repository is not None:
+            asyncio.create_task(self._repository.resume_session(session_id))
+
+        self._send_step()
+        self._step_timer.start(int(self.step_period_s * 1000))
+        self._sample_timer.start(self.sample_interval_ms)
+
+        logger.info(
+            f"[{self._worker.device_id}] 恢复测量 session_id={session_id}, "
+            f"step={step_index}, time_offset={time_offset}"
+        )
 
     @Slot()
     def _on_step_timer(self) -> None:
         if not self._active:
             return
+
+        # 若距上次发送不足 _LOCK_MS，延迟重试，避免与正在飞行的测距指令过近
+        if self._last_send_at is not None:
+            elapsed_ms = (datetime.now() - self._last_send_at).total_seconds() * 1000
+            remaining_ms = self._LOCK_MS - elapsed_ms
+            if remaining_ms > 0:
+                QTimer.singleShot(int(remaining_ms) + 1, self._on_step_timer)
+                return
 
         self._current_step += 1
         if self._current_step >= len(_STEP_PAYLOADS):
@@ -208,14 +281,18 @@ class MeasurementController(QObject):
         # 首帧建立归零基准
         if self._baseline_distance_mm is None:
             self._baseline_distance_mm = distance_mm
+            if self._repository is not None and self._session_id is not None:
+                asyncio.create_task(
+                    self._repository.set_session_baseline(self._session_id, distance_mm)
+                )
 
         relative_mm = distance_mm - self._baseline_distance_mm
         peak = self.displacement_peak_mm
         distance_pct = min(100.0, relative_mm / peak * 100.0) if peak > 0 else 0.0
 
-        elapsed_s = 0.0
+        elapsed_s = self._time_offset
         if self._start_time is not None:
-            elapsed_s = (frame.timestamp - self._start_time).total_seconds()
+            elapsed_s = self._time_offset + (frame.timestamp - self._start_time).total_seconds()
 
         self.sample_ready.emit(elapsed_s, self._current_pct, distance_pct, relative_mm)
 
@@ -227,6 +304,7 @@ class MeasurementController(QObject):
                 "current_pct": self._current_pct,
                 "distance_pct": distance_pct,
                 "distance_mm": relative_mm,
+                "elapsed_s": elapsed_s,
             }
         )
         if len(self._point_buffer) >= 10 and self._repository is not None and self._session_id is not None:
@@ -272,6 +350,19 @@ class MeasurementController(QObject):
         except Exception as e:
             logger.error(f"[{self._worker.device_id}] 写入测量点失败: {e}")
             self.error_occurred.emit(f"写入测量点失败: {e}")
+
+    async def _pause_then_flush_and_finish(self) -> None:
+        if self._repository is None or self._session_id is None:
+            return
+
+        try:
+            await self._repository.pause_session(self._session_id, self._current_step)
+        except Exception as e:
+            logger.error(f"[{self._worker.device_id}] 暂停测量 session 失败: {e}")
+            self.error_occurred.emit(f"暂停测量 session 失败: {e}")
+            return
+
+        await self._flush_and_finish()
 
     async def _flush_and_finish(self) -> None:
         await self._flush_points()

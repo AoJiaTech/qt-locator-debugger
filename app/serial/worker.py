@@ -39,6 +39,7 @@ class SerialWorker(QObject):
         self._read_task: asyncio.Task | None = None
         self._loop_send_task: asyncio.Task | None = None
         self._loop_stop_event = asyncio.Event()
+        self._send_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ #
     # 连接 / 断开
@@ -92,11 +93,12 @@ class SerialWorker(QObject):
         if self._writer is None:
             self.error_occurred.emit("串口未连接")
             return
-        self._writer.write(data)
-        await self._writer.drain()
-        frame = Frame(direction=Direction.TX, raw=data)
-        logger.debug(f"[{self.device_id}|{self.config.port}] TX {data.hex(' ').upper()}")
-        self.frame_received.emit(frame)
+        async with self._send_lock:
+            self._writer.write(data)
+            await self._writer.drain()
+            frame = Frame(direction=Direction.TX, raw=data)
+            logger.debug(f"[{self.device_id}|{self.config.port}] TX {data.hex(' ').upper()}")
+            self.frame_received.emit(frame)
 
     async def start_loop_send(self, data: bytes, interval_ms: int) -> None:
         """循环发送，直到调用 stop_loop_send() 或收到外部停止事件。"""

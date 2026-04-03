@@ -51,6 +51,8 @@ class MeasurementSession(Base):
     step_period_s: Mapped[float] = mapped_column(Float)
     sample_interval_ms: Mapped[int] = mapped_column(Integer)
     displacement_peak_mm: Mapped[float] = mapped_column(Float)
+    paused_step_index: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    baseline_distance_mm: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
 
 class MeasurementPoint(Base):
@@ -62,3 +64,4 @@ class MeasurementPoint(Base):
     current_pct: Mapped[float] = mapped_column(Float)
     distance_pct: Mapped[float] = mapped_column(Float)
     distance_mm: Mapped[float] = mapped_column(Float)
+    elapsed_s: Mapped[float] = mapped_column(Float, default=0.0)
