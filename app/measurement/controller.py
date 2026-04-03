@@ -54,6 +54,7 @@ class MeasurementController(QObject):
         self._mode = "single"
         self._current_step = 0
         self._current_pct = 0.0
+        self._pending_pct: float | None = None  # 已发出但未收到 echo 的阶跃值
         self._cycle_count = 0
         self._start_time: datetime | None = None
         self._session_id: int | None = None
@@ -75,13 +76,14 @@ class MeasurementController(QObject):
 
         self._worker.frame_received.connect(self._on_frame_received)
 
-    def start(self, mode: str) -> None:
+    def start(self, mode: str, baseline_mm: float | None = None) -> None:
         if self._active:
             return
         self._active = True
         self._mode = mode
         self._current_step = 0
         self._current_pct = 0.0
+        self._pending_pct = None
         self._cycle_count = 0
         self._start_time = datetime.now()
         self._session_id = None
@@ -89,7 +91,7 @@ class MeasurementController(QObject):
         self._awaiting_distance_response = False
         self._last_send_at = None
         self._point_buffer = []
-        self._baseline_distance_mm = None
+        self._baseline_distance_mm = baseline_mm  # None 表示用首帧自动归零
 
         self._send_step()
         self._step_timer.start(int(self.step_period_s * 1000))
@@ -139,8 +141,21 @@ class MeasurementController(QObject):
 
     @Slot()
     def _on_sample_timer(self) -> None:
-        if not self._active or self._locked or self._awaiting_distance_response:
+        if not self._active or self._locked:
             return
+
+        # 等待距离响应超时保护：超过 3 个采样间隔自动解除
+        if self._awaiting_distance_response:
+            if self._last_send_at is not None:
+                timeout_ms = self.sample_interval_ms * 1.5
+                elapsed_ms = (datetime.now() - self._last_send_at).total_seconds() * 1000
+                if elapsed_ms < timeout_ms:
+                    return
+                # 超时，清除标志并重试
+                self._awaiting_distance_response = False
+            else:
+                return
+
         if self._last_send_at is not None:
             elapsed_ms = (datetime.now() - self._last_send_at).total_seconds() * 1000
             if elapsed_ms < max(self._LOCK_MS, 150):
@@ -173,7 +188,18 @@ class MeasurementController(QObject):
             return
 
         parsed = frame.parsed
-        if not parsed or parsed.get("type") != "distance":
+        if not parsed:
+            return
+
+        # 收到阶跃 echo，确认阶跃生效
+        if parsed.get("type") == "write_ack":
+            if self._pending_pct is not None:
+                self._current_pct = self._pending_pct
+                self._pending_pct = None
+                self.step_changed.emit(self._current_step, self._current_pct, self._cycle_count)
+            return
+
+        if parsed.get("type") != "distance":
             return
 
         self._awaiting_distance_response = False
@@ -208,13 +234,12 @@ class MeasurementController(QObject):
 
     def _send_step(self) -> None:
         current_pct, payload = _STEP_PAYLOADS[self._current_step]
-        self._current_pct = current_pct
+        self._pending_pct = current_pct
         self._locked = True
         self._awaiting_distance_response = False
         self._last_send_at = datetime.now()
         self._lock_timer.start(self._LOCK_MS)
         asyncio.create_task(self._worker.send(payload))
-        self.step_changed.emit(self._current_step, current_pct, self._cycle_count)
 
     async def _create_db_session(self) -> None:
         if self._repository is None:

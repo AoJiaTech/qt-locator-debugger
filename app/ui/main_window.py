@@ -98,7 +98,9 @@ class _MainPage(QWidget):
             worker,
             read_cmd_hex=read_cmd_hex,
         )
-        self._device_panel.start_measurement(device_id, mode="single")
+        card = self._device_list.get_card(device_id)
+        baseline_mm = card._state.baseline if card is not None else None
+        self._device_panel.start_measurement(device_id, mode="single", baseline_mm=baseline_mm)
 
 
 class MainWindow(FluentWindow):

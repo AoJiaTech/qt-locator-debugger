@@ -309,9 +309,9 @@ class DevicePanel(QWidget):
         if panel:
             self._chart_tabs.setCurrentWidget(panel)
 
-    def start_measurement(self, device_id: str, mode: str = "single") -> None:
+    def start_measurement(self, device_id: str, mode: str = "single", baseline_mm: float | None = None) -> None:
         panel = self._chart_panels.get(device_id)
         if panel is None:
             return
         self._chart_tabs.setCurrentWidget(panel)
-        panel.start(mode)
+        panel.start(mode, baseline_mm=baseline_mm)

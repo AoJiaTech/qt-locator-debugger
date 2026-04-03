@@ -165,14 +165,14 @@ class MeasurementPanel(QWidget):
             pass
         self._controller = None
 
-    def start(self, mode: str) -> None:
+    def start(self, mode: str, baseline_mm: float | None = None) -> None:
         if self._controller is None:
             return
         self._last_mode = mode
         self._apply_params_to_controller()
         self._reset_plot()
         self._set_running(True)
-        self._controller.start(mode)
+        self._controller.start(mode, baseline_mm=baseline_mm)
 
     @Slot()
     def _on_single(self) -> None:
@@ -217,9 +217,15 @@ class MeasurementPanel(QWidget):
         self._curve_distance.setData(self._time_data, self._distance_data)
         self._plot_widget.setXRange(0, max(1.0, elapsed_s), padding=0)
 
-        mins = int(elapsed_s) // 60
+        hours = int(elapsed_s) // 3600
+        mins = (int(elapsed_s) % 3600) // 60
         secs = int(elapsed_s) % 60
-        self._duration_lbl.setText(f"运行时间: {mins:02d}:{secs:02d}")
+        if hours > 0:
+            self._duration_lbl.setText(f"运行时间: {hours}时{mins}分{secs}秒")
+        elif mins > 0:
+            self._duration_lbl.setText(f"运行时间: {mins}分{secs}秒")
+        else:
+            self._duration_lbl.setText(f"运行时间: {secs}秒")
         self._distance_val_lbl.setText(f"位移: {distance_pct:.1f}% ({distance_mm:.2f}mm)")
 
     @Slot(int, float)

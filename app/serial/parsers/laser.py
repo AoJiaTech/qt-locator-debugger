@@ -14,6 +14,10 @@ class LaserDisplacementParser(BaseParser):
         01 03 04 B8 47 00 00 6E 86
         ↑addr ↑func ↑byte_count ↑data(4字节) ↑CRC(2字节)
 
+    写单寄存器 echo（FC=0x06）示例：
+        01 06 00 00 01 90 88 36
+        ↑addr ↑func ↑reg_hi ↑reg_lo ↑val_hi ↑val_lo ↑CRC(2字节)
+
     数据字段（4 字节，共 2 个寄存器）：
         data[0:2] = 低位寄存器  (B8 47)
         data[2:4] = 高位寄存器  (00 00)
@@ -22,8 +26,9 @@ class LaserDisplacementParser(BaseParser):
     内部维护粘包缓冲区，处理数据未对齐的情况。
     """
 
-    # 读保持寄存器功能码
+    # 功能码
     FC_READ = 0x03
+    FC_WRITE_SINGLE = 0x06
     # 异常响应功能码（最高位置 1）
     FC_EXCEPTION_BASE = 0x80
 
@@ -53,6 +58,25 @@ class LaserDisplacementParser(BaseParser):
                     }
                 else:
                     # CRC 不对，丢弃一个字节重新搜索
+                    del self._buf[0]
+                    continue
+
+            # 写单寄存器 echo：固定 8 字节
+            if func == self.FC_WRITE_SINGLE:
+                if len(self._buf) < 8:
+                    break
+                frame = bytes(self._buf[:8])
+                if verify_modbus_crc(frame):
+                    reg = (frame[2] << 8) | frame[3]
+                    val = (frame[4] << 8) | frame[5]
+                    del self._buf[:8]
+                    return {
+                        "type": "write_ack",
+                        "addr": addr,
+                        "register": reg,
+                        "value": val,
+                    }
+                else:
                     del self._buf[0]
                     continue
 
