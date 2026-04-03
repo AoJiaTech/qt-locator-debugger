@@ -53,29 +53,51 @@ jobs:
         run: |
           echo "Version mismatch: project version ${{ steps.version.outputs.VERSION }} != tag version ${{ steps.version.outputs.TAG_VERSION }}"
           exit 1
+          
+      - name: Set Nuitka Mode
+        id: nuitka-config
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            echo "MODE=app" >> $GITHUB_OUTPUT
+          else
+            echo "MODE=onefile" >> $GITHUB_OUTPUT
+          fi
 
       - name: Qt GUI with PySide6
         uses: Nuitka/Nuitka-Action@main
         with:
           nuitka-version: main
-          mode: app
+          mode: ${{ steps.nuitka-config.outputs.MODE }}
           script-name: main.py
           enable-plugins: pyside6
           
-      - name: Rename and zip artifact (Linux/macOS)
+      - name: Package artifact (Linux/macOS)
         if: runner.os != 'Windows'
+        shell: bash
         run: |
           ZIP_NAME="locator-debugger-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}.zip"
-          zip -j "$ZIP_NAME" build/*.bin build/*.app/**/* || zip -j "$ZIP_NAME" build/*
+          cd build
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            # macOS 的 .app 本质上是文件夹，必须用 -r 递归打包
+            zip -r "../$ZIP_NAME" *.app
+          else
+            # Linux 打包单文件二进制，用 -j
+            zip -j "../$ZIP_NAME" *.bin
+          fi
+          cd ..
 
       - name: Rename artifact (Windows)
         if: runner.os == 'Windows'
+        shell: bash
         run: |
-          Move-Item -Path build\*.exe -Destination "locator-debugger-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}.exe"
+          # Windows 下直接重命名 exe（统一使用 bash 的 mv 命令，避免跨平台语法差异）
+          mv build/*.exe "locator-debugger-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}.exe"
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
+          # 同时抓取打包好的 .zip (mac/linux) 和 .exe (win) 上传
           files: |
             locator-debugger-*.exe
             locator-debugger-*.zip
