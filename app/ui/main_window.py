@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout
@@ -13,6 +13,9 @@ from app.serial.parser import BUILTIN_PARSERS
 from app.ui.device_list_panel import DeviceListPanel
 from app.storage.repository import SQLAlchemyRepository
 from app.serial.parsers.laser import LaserDisplacementParser
+
+if TYPE_CHECKING:
+    from app.schedule.manager import ScheduleManager
 
 # 注册激光位移传感器解析器
 BUILTIN_PARSERS["激光位移传感器"] = LaserDisplacementParser
@@ -32,6 +35,7 @@ class _MainPage(QWidget):
         manager: SerialManager,
         repository: SQLAlchemyRepository,
         initial_devices: list[DeviceConfig],
+        schedule_manager: "ScheduleManager | None" = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -39,6 +43,7 @@ class _MainPage(QWidget):
         self._manager = manager
         self._repository = repository
         self._initial_devices = initial_devices
+        self._schedule_manager = schedule_manager
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -61,7 +66,10 @@ class _MainPage(QWidget):
         self._device_list.measure_requested.connect(self._on_measure_requested)
         splitter.addWidget(self._device_list)
 
-        self._device_panel = DevicePanel(repository=self._repository)
+        self._device_panel = DevicePanel(
+            repository=self._repository,
+            schedule_manager=self._schedule_manager,
+        )
         splitter.addWidget(self._device_panel)
 
         splitter.setSizes([272, 928])

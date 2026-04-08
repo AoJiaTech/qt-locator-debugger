@@ -1,4 +1,5 @@
 import asyncio
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout, QSizePolicy, QVBoxLayout
@@ -22,6 +23,9 @@ from app.models.domain import Frame, Direction
 from app.ui.measurement_panel import MeasurementPanel
 from app.storage.repository import SQLAlchemyRepository
 from app.measurement.controller import MeasurementController
+
+if TYPE_CHECKING:
+    from app.schedule.manager import ScheduleManager
 
 
 class SendPanel(CardWidget):
@@ -219,12 +223,18 @@ class DevicePanel(QWidget):
     右侧主面板：上半图表区 + 下半多串口 Tab 收发区。
     """
 
-    def __init__(self, repository: SQLAlchemyRepository | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        repository: SQLAlchemyRepository | None = None,
+        schedule_manager: "ScheduleManager | None" = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._tabs: dict[str, PortTab] = {}
         self._chart_panels: dict[str, MeasurementPanel] = {}
         self._controllers: dict[str, MeasurementController] = {}
         self._repository = repository
+        self._schedule_manager = schedule_manager
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -272,6 +282,8 @@ class DevicePanel(QWidget):
             repository=self._repository,
         )
         panel.set_controller(controller)
+        if self._schedule_manager is not None:
+            panel.set_schedule_manager(self._schedule_manager)
         self._chart_panels[device_id] = panel
         self._controllers[device_id] = controller
         self._chart_tabs.addTab(panel, label, FluentIcon.IOT)
