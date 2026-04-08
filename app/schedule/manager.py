@@ -22,10 +22,19 @@ class TimeWindow:
 _DEFAULT_CONFIG = {"enabled": False, "windows": []}
 
 
+def _log_invalid_window(window: TimeWindow, exc: Exception) -> None:
+    logger.warning(f"[ScheduleManager] invalid time window '{window.label or window.id}': {exc}")
+
+
+
 def _in_window(window: TimeWindow, now: datetime) -> bool:
     probe = now + timedelta(microseconds=1)
-    previous_start = croniter(window.start_cron, probe).get_prev(datetime)
-    previous_end = croniter(window.end_cron, probe).get_prev(datetime)
+    try:
+        previous_start = croniter(window.start_cron, probe).get_prev(datetime)
+        previous_end = croniter(window.end_cron, probe).get_prev(datetime)
+    except Exception as exc:
+        _log_invalid_window(window, exc)
+        return False
     return previous_start >= previous_end
 
 
@@ -68,8 +77,12 @@ class ScheduleManager(QObject):
         active = self._compute_active(current)
         candidates: list[tuple[bool, datetime]] = []
         for window in enabled_windows:
-            start_at = croniter(window.start_cron, current).get_next(datetime)
-            end_at = croniter(window.end_cron, current).get_next(datetime)
+            try:
+                start_at = croniter(window.start_cron, current).get_next(datetime)
+                end_at = croniter(window.end_cron, current).get_next(datetime)
+            except Exception as exc:
+                _log_invalid_window(window, exc)
+                continue
             candidates.append((True, start_at))
             candidates.append((False, end_at))
 

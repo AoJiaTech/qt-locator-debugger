@@ -1,11 +1,9 @@
 from datetime import datetime
 from pathlib import Path
-import sys
 
 from PySide6.QtCore import QCoreApplication
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from app.schedule import manager as schedule_manager
 from app.schedule.manager import ScheduleManager, TimeWindow, _in_window
 
 
@@ -79,3 +77,36 @@ def test_manager_persists_enabled_flag_and_windows(tmp_path: Path) -> None:
     assert windows[0].end_cron == window.end_cron
     assert windows[0].label == "Workday"
     assert windows[0].id == window.id
+
+
+
+def test_in_window_returns_false_for_invalid_cron(monkeypatch) -> None:
+    window = TimeWindow(start_cron="invalid cron", end_cron="0 17 * * *")
+    warnings: list[str] = []
+
+    monkeypatch.setattr(schedule_manager.logger, "warning", warnings.append)
+
+    assert _in_window(window, datetime(2026, 4, 8, 9, 0, 0)) is False
+    assert any("invalid time window" in message for message in warnings)
+
+
+
+def test_next_transition_skips_invalid_windows(tmp_path: Path, monkeypatch) -> None:
+    _ensure_app()
+    manager = ScheduleManager(tmp_path / "schedule.json")
+    warnings: list[str] = []
+    monkeypatch.setattr(schedule_manager.logger, "warning", warnings.append)
+    manager.set_windows(
+        [
+            TimeWindow(start_cron="invalid cron", end_cron="0 17 * * *", label="Broken"),
+            TimeWindow(start_cron="0 9 * * *", end_cron="0 17 * * *", label="Workday"),
+        ]
+    )
+    manager.set_enabled(True)
+
+    warnings.clear()
+    will_activate, when = manager.next_transition(datetime(2026, 4, 8, 8, 0, 0))
+
+    assert will_activate is True
+    assert when == datetime(2026, 4, 8, 9, 0, 0)
+    assert any("invalid time window" in message for message in warnings)
