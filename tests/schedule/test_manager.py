@@ -2,17 +2,18 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtWidgets import QApplication
 
 from app.schedule import manager as schedule_manager
 from app.schedule.manager import ScheduleManager, TimeWindow, _in_window
 
 
 
-def _ensure_app() -> QCoreApplication:
-    app = QCoreApplication.instance()
+def _ensure_app() -> QApplication:
+    app = QApplication.instance()
     if app is None:
-        app = QCoreApplication([])
+        app = QApplication([])
+    assert isinstance(app, QApplication)
     return app
 
 
