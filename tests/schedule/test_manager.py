@@ -145,6 +145,24 @@ def test_next_transition_reports_nearest_end_when_currently_active(tmp_path: Pat
 
 
 
+def test_next_transition_returns_aggregate_end_for_overlapping_windows(tmp_path: Path) -> None:
+    _ensure_app()
+    manager = ScheduleManager(tmp_path / "schedule.json")
+    manager.set_windows(
+        [
+            TimeWindow(start_cron="0 9 * * *", end_cron="0 12 * * *", label="A"),
+            TimeWindow(start_cron="0 10 * * *", end_cron="0 15 * * *", label="B"),
+        ]
+    )
+    manager.set_enabled(True)
+
+    will_activate, when = manager.next_transition(datetime(2026, 4, 8, 10, 30, 0))
+
+    assert will_activate is False
+    assert when == datetime(2026, 4, 8, 15, 0, 0)
+
+
+
 def test_next_transition_handles_overnight_windows(tmp_path: Path) -> None:
     _ensure_app()
     manager = ScheduleManager(tmp_path / "schedule.json")

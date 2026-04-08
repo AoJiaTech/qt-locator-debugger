@@ -19,9 +19,6 @@ class TimeWindow:
     id: str = field(default_factory=lambda: str(uuid4()))
 
 
-_DEFAULT_CONFIG = {"enabled": False, "windows": []}
-
-
 def _log_invalid_window(window: TimeWindow, exc: Exception) -> None:
     logger.warning(f"[ScheduleManager] invalid time window '{window.label or window.id}': {exc}")
 
@@ -75,22 +72,20 @@ class ScheduleManager(QObject):
 
         current = now or datetime.now()
         active = self._compute_active(current)
-        candidates: list[tuple[bool, datetime]] = []
+        candidate_times: set[datetime] = set()
         for window in enabled_windows:
             try:
-                start_at = croniter(window.start_cron, current).get_next(datetime)
-                end_at = croniter(window.end_cron, current).get_next(datetime)
+                candidate_times.add(croniter(window.start_cron, current).get_next(datetime))
+                candidate_times.add(croniter(window.end_cron, current).get_next(datetime))
             except Exception as exc:
                 _log_invalid_window(window, exc)
                 continue
-            candidates.append((True, start_at))
-            candidates.append((False, end_at))
 
-        target_state = not active
-        matching = [candidate for candidate in candidates if candidate[0] is target_state]
-        if not matching:
-            return None
-        return min(matching, key=lambda item: item[1])
+        for candidate_time in sorted(candidate_times):
+            next_active = self._compute_active(candidate_time)
+            if next_active != active:
+                return next_active, candidate_time
+        return None
 
     def set_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
