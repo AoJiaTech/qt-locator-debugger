@@ -182,8 +182,11 @@ class MeasurementPanel(QWidget):
                 pass
         self._schedule_manager = manager
         manager.active_changed.connect(self._on_schedule_changed)
+        if not manager.is_active():
+            self._on_schedule_changed(False)
 
     def detach_controller(self) -> None:
+        self._paused_by_schedule = False
         if self._controller is None:
             return
         try:
@@ -198,6 +201,7 @@ class MeasurementPanel(QWidget):
     def start(self, mode: str, baseline_mm: float | None = None) -> None:
         if self._controller is None:
             return
+        self._paused_by_schedule = False
         self._last_mode = mode
         self._apply_params_to_controller()
         self._reset_plot()
@@ -222,6 +226,7 @@ class MeasurementPanel(QWidget):
         if self._controller is None:
             return
 
+        self._paused_by_schedule = False
         self._last_mode = mode
         self._period_spin.setValue(step_period_s)
         self._sample_spin.setValue(sample_interval_ms)
@@ -286,6 +291,7 @@ class MeasurementPanel(QWidget):
 
     @Slot()
     def _on_stop(self) -> None:
+        self._paused_by_schedule = False
         if self._controller is not None:
             self._controller.stop()
 
@@ -346,6 +352,7 @@ class MeasurementPanel(QWidget):
 
     @Slot(int, float)
     def _on_measurement_finished(self, cycle_count: int, duration_s: float) -> None:
+        self._paused_by_schedule = False
         self._set_running(False)
         if self._last_mode == "single":
             self._status_lbl.setText("● 单次完成")
