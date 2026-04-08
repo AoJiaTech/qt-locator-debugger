@@ -80,7 +80,6 @@ class TimeWindowDialog(MessageBoxBase):
         self.widget.setMinimumWidth(480)
         self.yesButton.setText("确定")
         self.cancelButton.setText("取消")
-        self.yesButton.clicked.connect(self._on_accept)
 
         self._load_window(window)
         self._refresh_preview()
@@ -213,12 +212,13 @@ class TimeWindowDialog(MessageBoxBase):
             return f"{weekday_text} {start_text}-{end_text}"
         return f"{start_cron} -> {end_cron}"
 
-    def _on_accept(self) -> None:
+    def validate(self) -> bool:
         start_cron, end_cron = self._current_crons()
         error = self._validate(start_cron, end_cron)
         if error is not None:
+            self._result = None
             self._show_error(error)
-            return
+            return False
 
         label = self._build_label(start_cron, end_cron)
         enabled = self._source_window.enabled if self._source_window is not None else True
@@ -230,6 +230,7 @@ class TimeWindowDialog(MessageBoxBase):
             start_cron=start_cron,
             end_cron=end_cron,
         )
+        return True
 
     def _validate(self, start_cron: str, end_cron: str) -> str | None:
         if self._mode_switch.isChecked() and not self._selected_weekdays():
@@ -238,6 +239,8 @@ class TimeWindowDialog(MessageBoxBase):
             return "开始 Cron 表达式无效。"
         if not croniter.is_valid(end_cron, strict=True):
             return "结束 Cron 表达式无效。"
+        if start_cron == end_cron:
+            return "开始和结束 Cron 表达式不能相同。"
         return None
 
     def _show_error(self, message: str) -> None:
