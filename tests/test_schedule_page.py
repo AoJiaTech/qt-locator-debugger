@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QWidget, QApplication
 
 from app.ui.schedule_page import TimeWindowDialog
 
