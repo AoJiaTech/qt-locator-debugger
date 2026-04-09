@@ -18,6 +18,7 @@ from qfluentwidgets import (
 
 if TYPE_CHECKING:
     from app.measurement.controller import MeasurementController
+    from app.schedule.manager import ScheduleManager
 
 pg.setConfigOption("background", "k")
 pg.setConfigOption("foreground", "w")
@@ -30,6 +31,8 @@ class MeasurementPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._controller: MeasurementController | None = None
+        self._schedule_manager: ScheduleManager | None = None
+        self._paused_by_schedule: bool = False
         self._history_time_data: list[float] = []
         self._history_current_data: list[float] = []
         self._history_distance_data: list[float] = []
@@ -169,7 +172,21 @@ class MeasurementPanel(QWidget):
         controller.measurement_finished.connect(self._on_measurement_finished)
         controller.measurement_paused.connect(self._on_measurement_paused)
 
+    def set_schedule_manager(self, manager: ScheduleManager) -> None:
+        if self._schedule_manager is manager:
+            return
+        if self._schedule_manager is not None:
+            try:
+                self._schedule_manager.active_changed.disconnect(self._on_schedule_changed)
+            except RuntimeError:
+                pass
+        self._schedule_manager = manager
+        manager.active_changed.connect(self._on_schedule_changed)
+        if not manager.is_active():
+            self._on_schedule_changed(False)
+
     def detach_controller(self) -> None:
+        self._paused_by_schedule = False
         if self._controller is None:
             return
         try:
@@ -184,6 +201,7 @@ class MeasurementPanel(QWidget):
     def start(self, mode: str, baseline_mm: float | None = None) -> None:
         if self._controller is None:
             return
+        self._paused_by_schedule = False
         self._last_mode = mode
         self._apply_params_to_controller()
         self._reset_plot()
@@ -208,6 +226,7 @@ class MeasurementPanel(QWidget):
         if self._controller is None:
             return
 
+        self._paused_by_schedule = False
         self._last_mode = mode
         self._period_spin.setValue(step_period_s)
         self._sample_spin.setValue(sample_interval_ms)
@@ -241,31 +260,38 @@ class MeasurementPanel(QWidget):
     def _on_auto(self) -> None:
         self.start("auto")
 
+    def _do_resume(self) -> None:
+        if self._controller is None:
+            return
+        session_id = getattr(self._controller, "_session_id", None)
+        step_index = getattr(self._controller, "_current_step", 0)
+        cycle_count = getattr(self._controller, "_cycle_count", 0)
+        if session_id is None:
+            return
+        self._apply_params_to_controller()
+        self._set_paused(False)
+        self._controller.resume(
+            session_id=session_id,
+            step_index=step_index,
+            time_offset=self._current_time_offset(),
+            mode=self._last_mode,
+            cycle_count=cycle_count,
+            baseline_distance_mm=getattr(self._controller, "_baseline_distance_mm", None),
+        )
+
     @Slot()
     def _on_pause_resume(self) -> None:
         if self._controller is None:
             return
         if self._is_paused:
-            session_id = getattr(self._controller, "_session_id", None)
-            step_index = getattr(self._controller, "_current_step", 0)
-            cycle_count = getattr(self._controller, "_cycle_count", 0)
-            if session_id is None:
-                return
-            self._apply_params_to_controller()
-            self._set_paused(False)
-            self._controller.resume(
-                session_id=session_id,
-                step_index=step_index,
-                time_offset=self._current_time_offset(),
-                mode=self._last_mode,
-                cycle_count=cycle_count,
-                baseline_distance_mm=getattr(self._controller, "_baseline_distance_mm", None),
-            )
+            self._paused_by_schedule = False
+            self._do_resume()
             return
         self._controller.pause()
 
     @Slot()
     def _on_stop(self) -> None:
+        self._paused_by_schedule = False
         if self._controller is not None:
             self._controller.stop()
 
@@ -304,10 +330,29 @@ class MeasurementPanel(QWidget):
     @Slot()
     def _on_measurement_paused(self) -> None:
         self._set_paused(True)
+        if self._paused_by_schedule:
+            self._status_lbl.setText("● 已按计划暂停")
+            self._status_lbl.setStyleSheet("color: #f9e2af;")
         self._update_duration_label(self._current_time_offset())
+
+    @Slot(bool)
+    def _on_schedule_changed(self, is_active: bool) -> None:
+        if not is_active:
+            if self._controller is None or not self._controller.is_running():
+                return
+            self._paused_by_schedule = True
+            self._controller.pause()
+            self._status_lbl.setText("● 已按计划暂停")
+            self._status_lbl.setStyleSheet("color: #f9e2af;")
+            return
+
+        if self._paused_by_schedule:
+            self._paused_by_schedule = False
+            self._do_resume()
 
     @Slot(int, float)
     def _on_measurement_finished(self, cycle_count: int, duration_s: float) -> None:
+        self._paused_by_schedule = False
         self._set_running(False)
         if self._last_mode == "single":
             self._status_lbl.setText("● 单次完成")

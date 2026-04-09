@@ -188,6 +188,10 @@ class MeasurementController(QObject):
             f"[{self._worker.device_id}] 恢复测量 session_id={session_id}, step={step_index}, time_offset={time_offset}"
         )
 
+    def is_running(self) -> bool:
+        """返回 True 表示正在运行（非暂停、非停止）。"""
+        return self._active and not self._paused
+
     @Slot()
     def _on_step_timer(self) -> None:
         if not self._active:

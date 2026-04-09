@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, Slot
@@ -6,8 +7,10 @@ from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout
 from qfluentwidgets import FluentIcon, FluentWindow, NavigationItemPosition
 
 from app.models.domain import DeviceConfig
+from app.schedule.manager import ScheduleManager
 from app.ui.device_panel import DevicePanel
 from app.ui.history_page import HistoryPage
+from app.ui.schedule_page import SchedulePage
 from app.serial.manager import SerialManager
 from app.serial.parser import BUILTIN_PARSERS
 from app.ui.device_list_panel import DeviceListPanel
@@ -32,6 +35,7 @@ class _MainPage(QWidget):
         manager: SerialManager,
         repository: SQLAlchemyRepository,
         initial_devices: list[DeviceConfig],
+        schedule_manager: "ScheduleManager | None" = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -39,6 +43,7 @@ class _MainPage(QWidget):
         self._manager = manager
         self._repository = repository
         self._initial_devices = initial_devices
+        self._schedule_manager = schedule_manager
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -61,7 +66,10 @@ class _MainPage(QWidget):
         self._device_list.measure_requested.connect(self._on_measure_requested)
         splitter.addWidget(self._device_list)
 
-        self._device_panel = DevicePanel(repository=self._repository)
+        self._device_panel = DevicePanel(
+            repository=self._repository,
+            schedule_manager=self._schedule_manager,
+        )
         splitter.addWidget(self._device_panel)
 
         splitter.setSizes([272, 928])
@@ -130,8 +138,15 @@ class MainWindow(FluentWindow):
 
         self._manager = SerialManager()
         self._repository = SQLAlchemyRepository()
+        self._schedule_manager = ScheduleManager(Path("schedule_config.json"))
 
-        self._main_page = _MainPage(self._manager, self._repository, initial_devices)
+        self._main_page = _MainPage(
+            self._manager,
+            self._repository,
+            initial_devices,
+            schedule_manager=self._schedule_manager,
+        )
+        self._schedule_page = SchedulePage(self._schedule_manager)
         self._history_page = HistoryPage(self._repository, self._manager)
         self._history_page.resume_requested.connect(self._on_history_resume_requested)
         self._setup_navigation()
@@ -145,6 +160,12 @@ class MainWindow(FluentWindow):
             self._main_page,
             FluentIcon.IOT,
             "调试主页",
+            NavigationItemPosition.TOP,
+        )
+        self.addSubInterface(
+            self._schedule_page,
+            FluentIcon.CALENDAR,
+            "定时运行",
             NavigationItemPosition.TOP,
         )
         self.addSubInterface(
