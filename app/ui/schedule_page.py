@@ -1,39 +1,39 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from uuid import uuid4
+from dataclasses import replace
 
 from croniter import croniter
 from PySide6.QtCore import QTime, Signal
 from PySide6.QtWidgets import (
     QFrame,
+    QWidget,
+    QTimeEdit,
     QGridLayout,
     QHBoxLayout,
     QSizePolicy,
-    QStackedWidget,
-    QTimeEdit,
     QVBoxLayout,
-    QWidget,
+    QStackedWidget,
 )
 from qfluentwidgets import (
-    BodyLabel,
-    CaptionLabel,
-    CardWidget,
-    CheckBox,
-    FluentIcon,
     InfoBar,
-    InfoBarPosition,
+    CheckBox,
     LineEdit,
-    MessageBoxBase,
-    PrimaryPushButton,
+    BodyLabel,
+    CardWidget,
+    FluentIcon,
     ScrollArea,
-    StrongBodyLabel,
-    SubtitleLabel,
-    SwitchButton,
     ToolButton,
+    CaptionLabel,
+    SwitchButton,
+    SubtitleLabel,
+    MessageBoxBase,
+    InfoBarPosition,
+    StrongBodyLabel,
+    PrimaryPushButton,
 )
 
-from app.schedule.manager import ScheduleManager, TimeWindow
+from app.schedule.manager import TimeWindow, ScheduleManager
 
 _WEEKDAY_OPTIONS: list[tuple[str, int, str]] = [
     ("mon", 1, "周一"),
@@ -449,7 +449,9 @@ class SchedulePage(QWidget):
 
     def _reload_window_cards(self) -> None:
         windows = self._schedule_manager.windows()
-        self._summary_label.setText(f"共 {len(windows)} 个时间窗，启用 {sum(1 for window in windows if window.enabled)} 个")
+        self._summary_label.setText(
+            f"共 {len(windows)} 个时间窗，启用 {sum(1 for window in windows if window.enabled)} 个"
+        )
 
         while self._window_layout.count() > 1:
             item = self._window_layout.takeAt(0)
@@ -509,7 +511,10 @@ class SchedulePage(QWidget):
         self.refresh()
 
     def _on_toggle_window(self, window_id: str, enabled: bool) -> None:
-        updated = [replace(window, enabled=enabled) if window.id == window_id else window for window in self._schedule_manager.windows()]
+        updated = [
+            replace(window, enabled=enabled) if window.id == window_id else window
+            for window in self._schedule_manager.windows()
+        ]
         self._schedule_manager.set_windows(updated)
         self.refresh()
 

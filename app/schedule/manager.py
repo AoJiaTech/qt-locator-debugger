@@ -1,11 +1,11 @@
 import json
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
-from pathlib import Path
 from uuid import uuid4
+from pathlib import Path
+from datetime import datetime, timedelta
+from dataclasses import field, asdict, dataclass
 
 from croniter import croniter
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QTimer, Signal, QObject
 
 from app.logger import logger
 
@@ -21,7 +21,6 @@ class TimeWindow:
 
 def _log_invalid_window(window: TimeWindow, exc: Exception) -> None:
     logger.warning(f"[ScheduleManager] invalid time window '{window.label or window.id}': {exc}")
-
 
 
 def _in_window(window: TimeWindow, now: datetime) -> bool:

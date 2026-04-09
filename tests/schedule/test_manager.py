@@ -8,7 +8,6 @@ from app.schedule import manager as schedule_manager
 from app.schedule.manager import ScheduleManager, TimeWindow, _in_window
 
 
-
 def _ensure_app() -> QApplication:
     app = QApplication.instance()
     if app is None:
@@ -17,14 +16,12 @@ def _ensure_app() -> QApplication:
     return app
 
 
-
 def test_in_window_treats_start_as_inclusive_and_end_as_exclusive() -> None:
     window = TimeWindow(start_cron="0 9 * * *", end_cron="0 17 * * *")
 
     assert _in_window(window, datetime(2026, 4, 8, 9, 0, 0)) is True
     assert _in_window(window, datetime(2026, 4, 8, 16, 59, 59)) is True
     assert _in_window(window, datetime(2026, 4, 8, 17, 0, 0)) is False
-
 
 
 def test_in_window_supports_overnight_windows() -> None:
@@ -36,7 +33,6 @@ def test_in_window_supports_overnight_windows() -> None:
     assert _in_window(window, datetime(2026, 4, 9, 6, 0, 0)) is False
 
 
-
 def test_manager_defaults_to_active_when_disabled_or_without_windows(tmp_path: Path) -> None:
     _ensure_app()
     manager = ScheduleManager(tmp_path / "schedule.json")
@@ -44,7 +40,6 @@ def test_manager_defaults_to_active_when_disabled_or_without_windows(tmp_path: P
     assert manager.is_enabled() is False
     assert manager.is_active() is True
     assert manager.next_transition() is None
-
 
 
 def test_manager_treats_enabled_without_windows_as_active(tmp_path: Path) -> None:
@@ -57,7 +52,6 @@ def test_manager_treats_enabled_without_windows_as_active(tmp_path: Path) -> Non
     assert manager.next_transition(datetime(2026, 4, 8, 8, 0, 0)) is None
 
 
-
 def test_manager_becomes_inactive_outside_enabled_windows(tmp_path: Path) -> None:
     _ensure_app()
     manager = ScheduleManager(tmp_path / "schedule.json")
@@ -66,7 +60,6 @@ def test_manager_becomes_inactive_outside_enabled_windows(tmp_path: Path) -> Non
 
     assert manager._compute_active(datetime(2026, 4, 8, 8, 0, 0)) is False
     assert manager._compute_active(datetime(2026, 4, 8, 9, 30, 0)) is True
-
 
 
 def test_manager_supports_two_work_windows_with_lunch_break(tmp_path: Path) -> None:
@@ -85,7 +78,6 @@ def test_manager_supports_two_work_windows_with_lunch_break(tmp_path: Path) -> N
     assert manager._compute_active(datetime(2026, 4, 8, 14, 0, 0)) is True
 
 
-
 def test_compute_active_ignores_disabled_windows(tmp_path: Path) -> None:
     _ensure_app()
     manager = ScheduleManager(tmp_path / "schedule.json")
@@ -101,7 +93,6 @@ def test_compute_active_ignores_disabled_windows(tmp_path: Path) -> None:
     assert manager._compute_active(datetime(2026, 4, 8, 10, 30, 0)) is True
 
 
-
 def test_manager_supports_overnight_windows(tmp_path: Path) -> None:
     _ensure_app()
     manager = ScheduleManager(tmp_path / "schedule.json")
@@ -114,7 +105,6 @@ def test_manager_supports_overnight_windows(tmp_path: Path) -> None:
     assert manager._compute_active(datetime(2026, 4, 9, 7, 0, 0)) is False
 
 
-
 def test_next_transition_reports_start_when_currently_inactive(tmp_path: Path) -> None:
     _ensure_app()
     manager = ScheduleManager(tmp_path / "schedule.json")
@@ -125,7 +115,6 @@ def test_next_transition_reports_start_when_currently_inactive(tmp_path: Path) -
 
     assert will_activate is True
     assert when == datetime(2026, 4, 8, 9, 0, 0)
-
 
 
 def test_next_transition_reports_nearest_end_when_currently_active(tmp_path: Path) -> None:
@@ -145,7 +134,6 @@ def test_next_transition_reports_nearest_end_when_currently_active(tmp_path: Pat
     assert when == datetime(2026, 4, 8, 12, 0, 0)
 
 
-
 def test_next_transition_returns_aggregate_end_for_overlapping_windows(tmp_path: Path) -> None:
     _ensure_app()
     manager = ScheduleManager(tmp_path / "schedule.json")
@@ -163,7 +151,6 @@ def test_next_transition_returns_aggregate_end_for_overlapping_windows(tmp_path:
     assert when == datetime(2026, 4, 8, 15, 0, 0)
 
 
-
 def test_next_transition_handles_overnight_windows(tmp_path: Path) -> None:
     _ensure_app()
     manager = ScheduleManager(tmp_path / "schedule.json")
@@ -174,7 +161,6 @@ def test_next_transition_handles_overnight_windows(tmp_path: Path) -> None:
 
     assert will_activate is False
     assert when == datetime(2026, 4, 9, 6, 0, 0)
-
 
 
 def test_manager_persists_enabled_flag_and_windows(tmp_path: Path) -> None:
@@ -195,7 +181,6 @@ def test_manager_persists_enabled_flag_and_windows(tmp_path: Path) -> None:
     assert windows[0].end_cron == window.end_cron
     assert windows[0].label == "Workday"
     assert windows[0].id == window.id
-
 
 
 def test_load_skips_malformed_window_entries(tmp_path: Path, monkeypatch) -> None:
@@ -227,7 +212,6 @@ def test_load_skips_malformed_window_entries(tmp_path: Path, monkeypatch) -> Non
     assert any("跳过无效时间窗配置" in message for message in warnings)
 
 
-
 def test_in_window_returns_false_for_invalid_cron(monkeypatch) -> None:
     window = TimeWindow(start_cron="invalid cron", end_cron="0 17 * * *")
     warnings: list[str] = []
@@ -236,7 +220,6 @@ def test_in_window_returns_false_for_invalid_cron(monkeypatch) -> None:
 
     assert _in_window(window, datetime(2026, 4, 8, 9, 0, 0)) is False
     assert any("invalid time window" in message for message in warnings)
-
 
 
 def test_next_transition_skips_invalid_windows(tmp_path: Path, monkeypatch) -> None:

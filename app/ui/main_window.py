@@ -1,18 +1,18 @@
 import asyncio
-from pathlib import Path
 from typing import Any
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import QWidget, QSplitter, QHBoxLayout
 from qfluentwidgets import FluentIcon, FluentWindow, NavigationItemPosition
 
 from app.models.domain import DeviceConfig
-from app.schedule.manager import ScheduleManager
 from app.ui.device_panel import DevicePanel
 from app.ui.history_page import HistoryPage
-from app.ui.schedule_page import SchedulePage
 from app.serial.manager import SerialManager
 from app.serial.parser import BUILTIN_PARSERS
+from app.ui.schedule_page import SchedulePage
+from app.schedule.manager import ScheduleManager
 from app.ui.device_list_panel import DeviceListPanel
 from app.storage.repository import SQLAlchemyRepository
 from app.serial.parsers.laser import LaserDisplacementParser
@@ -35,7 +35,7 @@ class _MainPage(QWidget):
         manager: SerialManager,
         repository: SQLAlchemyRepository,
         initial_devices: list[DeviceConfig],
-        schedule_manager: "ScheduleManager | None" = None,
+        schedule_manager: ScheduleManager | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)

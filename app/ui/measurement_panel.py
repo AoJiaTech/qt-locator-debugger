@@ -17,8 +17,8 @@ from qfluentwidgets import (
 )
 
 if TYPE_CHECKING:
-    from app.measurement.controller import MeasurementController
     from app.schedule.manager import ScheduleManager
+    from app.measurement.controller import MeasurementController
 
 pg.setConfigOption("background", "k")
 pg.setConfigOption("foreground", "w")

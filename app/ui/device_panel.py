@@ -226,7 +226,7 @@ class DevicePanel(QWidget):
     def __init__(
         self,
         repository: SQLAlchemyRepository | None = None,
-        schedule_manager: "ScheduleManager | None" = None,
+        schedule_manager: ScheduleManager | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
