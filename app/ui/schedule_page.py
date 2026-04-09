@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from uuid import uuid4
 
 from croniter import croniter
 from PySide6.QtCore import QTime, Signal
@@ -222,7 +223,7 @@ class TimeWindowDialog(MessageBoxBase):
 
         label = self._build_label(start_cron, end_cron)
         enabled = self._source_window.enabled if self._source_window is not None else True
-        window_id = self._source_window.id if self._source_window is not None else TimeWindow("", "").id
+        window_id = self._source_window.id if self._source_window is not None else str(uuid4())
         self._result = TimeWindow(
             id=window_id,
             label=label,
