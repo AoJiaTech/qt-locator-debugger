@@ -314,6 +314,9 @@ class DeviceCard(CardWidget):
         self._is_selected = False
         self._state = MeasurementState()
         self._disconnecting = False  # 主动断开标志，避免 _on_step_disconnected 误报
+        self._is_dual_port = False  # 当前连接是否为双串口模式
+        self._query_connected = False
+        self._step_connected = False
         self._same_port = device_config.step_port_config is None
 
         self.setBorderRadius(8)
@@ -715,6 +718,9 @@ class DeviceCard(CardWidget):
             self.step_worker.error_occurred.connect(self._on_error)
 
         self._set_controls_enabled(False)
+        self._is_dual_port = step_config is not None
+        self._query_connected = False
+        self._step_connected = False
 
         # 连接两个串口
         asyncio.create_task(self.query_worker.connect())
@@ -735,10 +741,11 @@ class DeviceCard(CardWidget):
 
     @Slot()
     def _on_query_connected(self) -> None:
-        self._switch.setText("已连接")
-        self._dot.set_connected(True)
-        self._set_measurement_enabled(True)
-        self.device_selected.emit(self._config.device_id)
+        self._query_connected = True
+        if self._is_dual_port and not self._step_connected:
+            # 双口模式：等阶跃口也连上再切换为已连接
+            return
+        self._finalize_connected()
 
     @Slot()
     def _on_query_disconnected(self) -> None:
@@ -749,6 +756,9 @@ class DeviceCard(CardWidget):
         self._set_controls_enabled(True)
         self._set_measurement_enabled(False)
         self._disconnecting = False
+        self._query_connected = False
+        self._step_connected = False
+        self._is_dual_port = False
         self._manager.remove_workers(self._config.device_id)
         self.query_worker = None
         self.step_worker = None
@@ -764,6 +774,16 @@ class DeviceCard(CardWidget):
         spc = self._config.step_port_config
         port_name = spc.port if spc else "?"
         logger.info(f"[{self._config.device_id}] 阶跃串口 {port_name} 已连接")
+        self._step_connected = True
+        if self._query_connected:
+            self._finalize_connected()
+
+    def _finalize_connected(self) -> None:
+        """两个串口都已连接（或单口模式下查询口已连接），切换 UI 为已连接状态。"""
+        self._switch.setText("已连接")
+        self._dot.set_connected(True)
+        self._set_measurement_enabled(True)
+        self.device_selected.emit(self._config.device_id)
 
     @Slot()
     def _on_step_disconnected(self) -> None:
