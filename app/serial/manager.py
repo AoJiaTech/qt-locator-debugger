@@ -1,5 +1,3 @@
-import asyncio
-
 from app.logger import logger
 from app.models.domain import PortConfig
 from app.serial.parser import BaseParser
@@ -27,15 +25,16 @@ class SerialManager:
         step_config 为 None 时，阶跃 worker 直接复用 query worker 实例（单串口兼容），
         manager 字典中 query/step 两个 key 指向同一对象，避免下游误判为双串口。
         返回 (query_worker, step_worker)。
+
+        注意：此方法只负责创建 + 登记新 worker，**不会**主动断开旧 worker。
+        旧 worker 上的 Qt 信号（如 disconnected）若被异步触发，会回调到 UI 槽里
+        把刚装上的新 worker 又清掉，造成竞态。调用方需自行保证替换前已断开 + detach。
         """
-        # 替换前防御性断开旧 worker（异常重连等非正常路径下，旧 worker 可能仍持有打开的串口）
-        old_workers = {
-            self._workers.get((device_id, "query")),
-            self._workers.get((device_id, "step")),
-        }
-        for old in old_workers:
-            if old is not None:
-                asyncio.create_task(old.disconnect())
+        if device_id in {k[0] for k in self._workers}:
+            logger.warning(
+                f"[Manager] 设备 {device_id} 已存在 worker，调用方应先 disconnect 再 create_workers"
+            )
+
         self.remove_workers(device_id)
 
         query_worker = SerialWorker(query_config, device_id, query_parser, repository)

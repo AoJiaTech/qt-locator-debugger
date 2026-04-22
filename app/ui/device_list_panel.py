@@ -603,6 +603,11 @@ class DeviceCard(CardWidget):
         if same:
             self._config.step_port_config = None
             self.step_port_config_changed.emit(self._config.device_id, None)
+        else:
+            # 切到双口模式时，新出现的 step 控件需按当前连接状态启用
+            connected = self.query_worker is not None
+            self._step_port_combo.setEnabled(not connected)
+            self._step_baud_combo.setEnabled(not connected)
 
     @Slot()
     def _on_name_changed(self, name: str) -> None:
@@ -654,15 +659,24 @@ class DeviceCard(CardWidget):
         step_config = None
         if not self._same_port:
             step_port = self._step_port_combo.currentText()
-            if step_port:
-                step_existing = self._config.step_port_config
-                step_config = PortConfig(
-                    port=step_port,
-                    baudrate=int(self._step_baud_combo.currentText()),
-                    bytesize=step_existing.bytesize if step_existing else 8,
-                    parity=step_existing.parity if step_existing else "N",
-                    stopbits=step_existing.stopbits if step_existing else 1.0,
+            if not step_port:
+                InfoBar.warning(
+                    title="连接失败",
+                    content="双串口模式下必须选择阶跃串口。",
+                    position=InfoBarPosition.TOP_RIGHT,
+                    duration=3000,
+                    parent=self.window(),
                 )
+                self._switch.setChecked(False)
+                return
+            step_existing = self._config.step_port_config
+            step_config = PortConfig(
+                port=step_port,
+                baudrate=int(self._step_baud_combo.currentText()),
+                bytesize=step_existing.bytesize if step_existing else 8,
+                parity=step_existing.parity if step_existing else "N",
+                stopbits=step_existing.stopbits if step_existing else 1.0,
+            )
 
         parser_cls = BUILTIN_PARSERS[self._parser_combo.currentText()]
         self.query_worker, self.step_worker = self._manager.create_workers(

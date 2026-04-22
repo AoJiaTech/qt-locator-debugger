@@ -253,7 +253,8 @@ class MeasurementController(QObject):
         if not self._active:
             return
 
-        # 单串口模式：保留完整锁逻辑
+        # in-flight 流控：避免在上次响应未到达前再次发起读请求
+        # 单口模式还需要额外的锁与发送间隔限制
         if not self._dual_port:
             if self._locked:
                 return
@@ -270,6 +271,16 @@ class MeasurementController(QObject):
                 elapsed_ms = (datetime.now() - self._last_send_at).total_seconds() * 1000
                 if elapsed_ms < max(self._LOCK_MS, 150):
                     return
+        elif self._awaiting_distance_response:
+            # 双口模式：前一次读请求尚未收到响应，超时后强制清除以重发
+            if self._last_send_at is not None:
+                timeout_ms = self.sample_interval_ms * 1.5
+                elapsed_ms = (datetime.now() - self._last_send_at).total_seconds() * 1000
+                if elapsed_ms < timeout_ms:
+                    return
+                self._awaiting_distance_response = False
+            else:
+                return
 
         hex_text = self._read_cmd_hex.replace(" ", "").replace(":", "")
         if not hex_text:
@@ -284,9 +295,8 @@ class MeasurementController(QObject):
             self.stop()
             return
 
-        if not self._dual_port:
-            self._awaiting_distance_response = True
-            self._last_send_at = datetime.now()
+        self._awaiting_distance_response = True
+        self._last_send_at = datetime.now()
         asyncio.create_task(self._read_worker.send(build_modbus_frame(payload)))
 
     @Slot()
@@ -318,6 +328,7 @@ class MeasurementController(QObject):
         parsed = frame.parsed
         if not parsed or parsed.get("type") != "distance":
             return
+        self._awaiting_distance_response = False
         self._process_distance(frame, parsed)
 
     # ------------------------------------------------------------------ #
