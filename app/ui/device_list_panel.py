@@ -749,6 +749,9 @@ class DeviceCard(CardWidget):
 
     @Slot()
     def _on_query_disconnected(self) -> None:
+        # 忽略旧 worker 发出的过期信号（快速重连场景）
+        if self.sender() is not None and self.sender() is not self.query_worker:
+            return
         self._switch.setChecked(False)
         self._switch.setText("已断开")
         self._switch.setEnabled(True)
@@ -788,6 +791,11 @@ class DeviceCard(CardWidget):
     @Slot()
     def _on_step_disconnected(self) -> None:
         logger.info(f"[{self._config.device_id}] 阶跃串口已断开")
+        # 忽略旧 worker 或已不在双口模式下的过期信号
+        sender = self.sender()
+        is_dual = self.step_worker is not None and self.step_worker is not self.query_worker
+        if not is_dual or sender is not self.step_worker:
+            return
         # 主动断开流程中不弹告警、不联动断开（由 _on_query_disconnected 统一收尾）
         if self._disconnecting:
             return
@@ -807,6 +815,13 @@ class DeviceCard(CardWidget):
 
     @Slot(str)
     def _on_error(self, msg: str) -> None:
+        # 忽略旧 worker 发出的过期错误信号
+        sender = self.sender()
+        if sender is not None and sender is not self.query_worker and sender is not self.step_worker:
+            return
+        # 主动断开期间不弹错误提示（断开本身会触发清理）
+        if self._disconnecting:
+            return
         InfoBar.error(
             title="串口错误",
             content=f"[{self._config.name}] {msg}",
