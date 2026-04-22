@@ -313,6 +313,7 @@ class DeviceCard(CardWidget):
         self.worker = None
         self._is_selected = False
         self._state = MeasurementState()
+        self._disconnecting = False  # 主动断开标志，避免 _on_step_disconnected 误报
         self._same_port = device_config.step_port_config is None
 
         self.setBorderRadius(8)
@@ -724,6 +725,7 @@ class DeviceCard(CardWidget):
         # 断开期间禁用开关，避免用户快速重连导致旧 worker 的 disconnected/error
         # 信号回调清掉新创建的 worker（参见 SerialManager.create_workers 注释）
         self._switch.setEnabled(False)
+        self._disconnecting = True  # 标记主动断开，_on_step_disconnected 据此跳过告警
         if self.query_worker:
             asyncio.create_task(self.query_worker.disconnect())
         if self.step_worker and self.step_worker is not self.query_worker:
@@ -746,6 +748,7 @@ class DeviceCard(CardWidget):
         self._dot.set_connected(False)
         self._set_controls_enabled(True)
         self._set_measurement_enabled(False)
+        self._disconnecting = False
         self._manager.remove_workers(self._config.device_id)
         self.query_worker = None
         self.step_worker = None
@@ -765,7 +768,10 @@ class DeviceCard(CardWidget):
     @Slot()
     def _on_step_disconnected(self) -> None:
         logger.info(f"[{self._config.device_id}] 阶跃串口已断开")
-        # 双串口模式下阶跃口掉线视为致命错误：测量流程无法继续，
+        # 主动断开流程中不弹告警、不联动断开（由 _on_query_disconnected 统一收尾）
+        if self._disconnecting:
+            return
+        # 双串口模式下阶跃口意外掉线视为致命错误：测量流程无法继续，
         # 需要联动断开查询口并提示用户，避免界面仍显示「已连接」但实际不可测量
         if self.step_worker is not None and self.step_worker is not self.query_worker:
             InfoBar.warning(
