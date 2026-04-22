@@ -608,6 +608,9 @@ class DeviceCard(CardWidget):
             connected = self.query_worker is not None
             self._step_port_combo.setEnabled(not connected)
             self._step_baud_combo.setEnabled(not connected)
+            # 立即基于当前下拉框值初始化并持久化 step 配置，避免用户不动下拉框
+            # 直接连接时 UI 与持久化配置不一致（重启后退回同口模式）
+            self._on_step_port_config_changed()
 
     @Slot()
     def _on_name_changed(self, name: str) -> None:
