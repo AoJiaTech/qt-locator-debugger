@@ -672,6 +672,16 @@ class DeviceCard(CardWidget):
                 )
                 self._switch.setChecked(False)
                 return
+            if step_port == query_port:
+                InfoBar.warning(
+                    title="连接失败",
+                    content="双串口模式下，阶跃串口不能与查询串口相同。",
+                    position=InfoBarPosition.TOP_RIGHT,
+                    duration=3000,
+                    parent=self.window(),
+                )
+                self._switch.setChecked(False)
+                return
             step_existing = self._config.step_port_config
             step_config = PortConfig(
                 port=step_port,
@@ -711,6 +721,9 @@ class DeviceCard(CardWidget):
             asyncio.create_task(self.step_worker.connect())
 
     def _do_disconnect(self) -> None:
+        # 断开期间禁用开关，避免用户快速重连导致旧 worker 的 disconnected/error
+        # 信号回调清掉新创建的 worker（参见 SerialManager.create_workers 注释）
+        self._switch.setEnabled(False)
         if self.query_worker:
             asyncio.create_task(self.query_worker.disconnect())
         if self.step_worker and self.step_worker is not self.query_worker:
@@ -729,6 +742,7 @@ class DeviceCard(CardWidget):
     def _on_query_disconnected(self) -> None:
         self._switch.setChecked(False)
         self._switch.setText("已断开")
+        self._switch.setEnabled(True)
         self._dot.set_connected(False)
         self._set_controls_enabled(True)
         self._set_measurement_enabled(False)
