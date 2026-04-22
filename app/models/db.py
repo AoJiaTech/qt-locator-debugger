@@ -18,12 +18,18 @@ class DeviceRecord(Base):
     parser_name: Mapped[str] = mapped_column(String(64), default="Raw Hex")
     read_cmd_hex: Mapped[str] = mapped_column(String(128), default="")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    # 串口配置（可空，未选择时为 NULL）
+    # 查询串口配置（可空，未选择时为 NULL）
     port: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     baudrate: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bytesize: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     parity: Mapped[str | None] = mapped_column(String(4), nullable=True, default=None)
     stopbits: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # 阶跃串口配置（可空，NULL 表示复用查询串口）
+    step_port: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    step_baudrate: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    step_bytesize: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    step_parity: Mapped[str | None] = mapped_column(String(4), nullable=True, default=None)
+    step_stopbits: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
 
 class ParsedRecord(Base):

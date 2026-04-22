@@ -35,6 +35,7 @@ from qfluentwidgets import (
     TransparentToolButton,
 )
 
+from app.logger import logger
 from app.utils import build_modbus_frame
 from app.serial.manager import SerialManager
 from app.serial.parser import BUILTIN_PARSERS
@@ -119,10 +120,9 @@ class _MeasurementDisplay(CardWidget):
 
 
 class _DragHandle(TransparentToolButton):
-    """拖拽排序手柄。在自身的 mouseMoveEvent 里直接启动 QDrag，
-    避免父控件 mousePressEvent 被子控件事件消费而拿不到的问题。"""
+    """拖拽排序手柄。"""
 
-    drag_started = Signal(object)  # 传递 QDrag 对象，由父卡片填充 MimeData 并 exec
+    drag_started = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -152,7 +152,7 @@ class _DragHandle(TransparentToolButton):
 
 
 class _EditableLabel(QStackedWidget):
-    """双击可编辑的标签控件。层0=只读Label，层1=LineEdit。"""
+    """双击可编辑的标签控件。"""
 
     name_changed = Signal(str)
 
@@ -160,15 +160,14 @@ class _EditableLabel(QStackedWidget):
         super().__init__(parent)
         self._committing = False
         self._editable = True
-        # 透明背景，避免 QStackedWidget 默认背景色破坏卡片样式
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self._label = StrongBodyLabel(text)
         self._edit = LineEdit()
         self._edit.setFixedHeight(28)
 
-        self.addWidget(self._label)  # index 0
-        self.addWidget(self._edit)  # index 1
+        self.addWidget(self._label)
+        self.addWidget(self._edit)
 
         self._label.installEventFilter(self)
         self._edit.returnPressed.connect(self._commit)
@@ -205,7 +204,6 @@ class _EditableLabel(QStackedWidget):
         self._committing = False
 
     def _on_editing_finished(self) -> None:
-        # returnPressed 已经调用 _commit，editingFinished 会再次触发，用 flag 避免重复
         if not self._committing and self.currentIndex() == 1:
             self._commit()
 
@@ -219,30 +217,26 @@ class _EditableLabel(QStackedWidget):
 
 
 class _AdvancedPortDialog(MessageBoxBase):
-    """高级串口参数配置弹窗（数据位/校验位/停止位），Fluent 风格。"""
+    """高级串口参数配置弹窗。"""
 
     def __init__(self, port_config: PortConfig | None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._result_config: PortConfig | None = None
         self._port_config = port_config
 
-        # 从当前配置读取初始值，没有则用默认
         bytesize = port_config.bytesize if port_config else 8
         parity = port_config.parity if port_config else "N"
         stopbits = port_config.stopbits if port_config else 1.0
 
-        # 标题
         title_label = SubtitleLabel("高级串口参数", self.widget)
         self.viewLayout.addWidget(title_label)
         self.viewLayout.addSpacing(8)
 
-        # 数据位
         self._bytesize_combo = ComboBox(self.widget)
         self._bytesize_combo.addItems(_BYTESIZE_OPTIONS)
         self._bytesize_combo.setCurrentText(str(bytesize))
         self.viewLayout.addLayout(self._field_row("数据位", self._bytesize_combo))
 
-        # 校验位
         self._parity_combo = ComboBox(self.widget)
         for code, label in _PARITY_OPTIONS:
             self._parity_combo.addItem(label, userData=code)
@@ -250,7 +244,6 @@ class _AdvancedPortDialog(MessageBoxBase):
         self._parity_combo.setCurrentIndex(current_parity_idx)
         self.viewLayout.addLayout(self._field_row("校验位", self._parity_combo))
 
-        # 停止位
         self._stopbits_combo = ComboBox(self.widget)
         for label, _ in _STOPBITS_OPTIONS:
             self._stopbits_combo.addItem(label)
@@ -288,26 +281,20 @@ class _AdvancedPortDialog(MessageBoxBase):
         )
 
     def get_result(self) -> PortConfig | None:
-        """返回用户确认后的新 PortConfig，取消则返回 None。"""
         return self._result_config
 
 
 class DeviceCard(CardWidget):
     """
-    通用设备卡片。
-
-    包含串口配置、连接控制，以及通用测量功能：
-      - 用户在卡片内填写读取命令（十六进制，不含CRC）
-      - 归零：发送一次读取，将响应值记为基准值
-      - 读取：发送读取命令，显示相对距离或绝对距离
-    解析器输出 {"type": "distance", "distance_mm": float} 时触发测量显示。
+    通用设备卡片，支持双串口配置（查询串口 + 阶跃串口）。
     """
 
-    device_selected = Signal(str)  # device_id
-    remove_requested = Signal(str)  # device_id
-    measure_requested = Signal(str)  # device_id
-    cmd_changed = Signal(str, str)  # device_id, new_hex
-    port_config_changed = Signal(str, object)  # device_id, PortConfig | None
+    device_selected = Signal(str)
+    remove_requested = Signal(str)
+    measure_requested = Signal(str)
+    cmd_changed = Signal(str, str)
+    port_config_changed = Signal(str, object)  # device_id, query PortConfig | None
+    step_port_config_changed = Signal(str, object)  # device_id, step PortConfig | None
 
     def __init__(
         self,
@@ -320,17 +307,23 @@ class DeviceCard(CardWidget):
         self._config = device_config
         self._manager = manager
         self._repository = repository
+        self.query_worker = None
+        self.step_worker = None
+        # 兼容：worker 指向 query_worker
         self.worker = None
         self._is_selected = False
         self._state = MeasurementState()
+        self._same_port = device_config.step_port_config is None
 
         self.setBorderRadius(8)
         self._build_ui()
         self._refresh_ports()
         self._restore_port_config()
-        # 完成初始化后再连接 combo 信号，避免初始化时触发保存
+        # 完成初始化后再连接 combo 信号
         self._port_combo.currentIndexChanged.connect(self._on_port_config_changed)
         self._baud_combo.currentIndexChanged.connect(self._on_port_config_changed)
+        self._step_port_combo.currentIndexChanged.connect(self._on_step_port_config_changed)
+        self._step_baud_combo.currentIndexChanged.connect(self._on_step_port_config_changed)
 
     # ------------------------------------------------------------------ #
     # UI 构建
@@ -344,7 +337,6 @@ class DeviceCard(CardWidget):
         # ── 标题行 ──────────────────────────────────────────────────────
         header = QHBoxLayout()
 
-        # 拖拽手柄
         self._drag_handle = _DragHandle()
         self._drag_handle.drag_started.connect(self._on_drag_started)
         header.addWidget(self._drag_handle)
@@ -378,13 +370,39 @@ class DeviceCard(CardWidget):
         header.addWidget(self._remove_btn)
         root.addLayout(header)
 
-        # ── 串口 / 波特率 / 解析器 ──────────────────────────────────────
+        # ── 查询串口配置 ──────────────────────────────────────────────────
+        query_label = CaptionLabel("查询串口")
+        query_label.setStyleSheet("color: #666; font-weight: bold;")
+        root.addWidget(query_label)
+
         form = QVBoxLayout()
         form.setSpacing(6)
         form.addLayout(self._row("串口", self._make_port_combo()))
         form.addLayout(self._row("波特率", self._make_baud_combo()))
         form.addLayout(self._row("解析", self._make_parser_combo()))
         root.addLayout(form)
+
+        # ── 阶跃串口配置 ──────────────────────────────────────────────────
+        step_header = QHBoxLayout()
+        step_label = CaptionLabel("阶跃串口")
+        step_label.setStyleSheet("color: #666; font-weight: bold;")
+        step_header.addWidget(step_label)
+        step_header.addStretch()
+
+        self._same_port_switch = SwitchButton("同查询串口")
+        self._same_port_switch.setChecked(self._same_port)
+        self._same_port_switch.checkedChanged.connect(self._on_same_port_changed)
+        step_header.addWidget(self._same_port_switch)
+        root.addLayout(step_header)
+
+        self._step_form_widget = QWidget()
+        step_form = QVBoxLayout(self._step_form_widget)
+        step_form.setContentsMargins(0, 0, 0, 0)
+        step_form.setSpacing(6)
+        step_form.addLayout(self._row("串口", self._make_step_port_combo()))
+        step_form.addLayout(self._row("波特率", self._make_step_baud_combo()))
+        root.addWidget(self._step_form_widget)
+        self._step_form_widget.setVisible(not self._same_port)
 
         # ── 连接开关 ────────────────────────────────────────────────────
         conn_row = QHBoxLayout()
@@ -460,20 +478,53 @@ class DeviceCard(CardWidget):
         self._parser_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         return self._parser_combo
 
+    def _make_step_port_combo(self) -> QWidget:
+        self._step_port_combo = ComboBox()
+        self._step_port_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        return self._step_port_combo
+
+    def _make_step_baud_combo(self) -> QWidget:
+        self._step_baud_combo = ComboBox()
+        self._step_baud_combo.addItems(BAUDRATES)
+        spc = self._config.step_port_config
+        self._step_baud_combo.setCurrentText(str(spc.baudrate if spc else 9600))
+        self._step_baud_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        return self._step_baud_combo
+
     def _restore_port_config(self) -> None:
         """应用启动时，若 DB 有保存的串口配置，回填到下拉框。"""
         pc = self._config.port_config
-        if pc is None:
-            return
-        ports = [self._port_combo.itemText(i) for i in range(self._port_combo.count())]
-        if pc.port in ports:
-            self._port_combo.setCurrentText(pc.port)
-        self._baud_combo.setCurrentText(str(pc.baudrate))
+        if pc is not None:
+            ports = [self._port_combo.itemText(i) for i in range(self._port_combo.count())]
+            if pc.port in ports:
+                self._port_combo.setCurrentText(pc.port)
+            self._baud_combo.setCurrentText(str(pc.baudrate))
+
+        spc = self._config.step_port_config
+        if spc is not None:
+            ports = [self._step_port_combo.itemText(i) for i in range(self._step_port_combo.count())]
+            if spc.port in ports:
+                self._step_port_combo.setCurrentText(spc.port)
+            self._step_baud_combo.setCurrentText(str(spc.baudrate))
+            self._same_port = False
+            self._same_port_switch.setChecked(False)
 
     def _set_measurement_enabled(self, enabled: bool) -> None:
         self._zero_btn.setEnabled(enabled)
         self._read_btn.setEnabled(enabled)
         self._measure_btn.setEnabled(enabled)
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        """连接/断开时切换各控件可用状态。"""
+        self._port_combo.setEnabled(enabled)
+        self._baud_combo.setEnabled(enabled)
+        self._parser_combo.setEnabled(enabled)
+        self._name_label.set_editable(enabled)
+        self._advanced_btn.setEnabled(enabled)
+        self._same_port_switch.setEnabled(enabled)
+        if not self._same_port:
+            self._step_port_combo.setEnabled(enabled)
+            self._step_baud_combo.setEnabled(enabled)
 
     # ------------------------------------------------------------------ #
     # 选中高亮
@@ -496,15 +547,21 @@ class DeviceCard(CardWidget):
     @Slot()
     def _refresh_ports(self) -> None:
         current = self._port_combo.currentText()
-        self._port_combo.clear()
+        step_current = self._step_port_combo.currentText()
         ports = [p.portName() for p in QSerialPortInfo.availablePorts()]
+
+        self._port_combo.clear()
         self._port_combo.addItems(ports)
         if current in ports:
             self._port_combo.setCurrentText(current)
 
+        self._step_port_combo.clear()
+        self._step_port_combo.addItems(ports)
+        if step_current in ports:
+            self._step_port_combo.setCurrentText(step_current)
+
     @Slot()
     def _on_port_config_changed(self) -> None:
-        """串口或波特率选择变化时，持久化当前配置。"""
         port = self._port_combo.currentText()
         baudrate_text = self._baud_combo.currentText()
         if not port or not baudrate_text:
@@ -521,13 +578,40 @@ class DeviceCard(CardWidget):
         self.port_config_changed.emit(self._config.device_id, new_config)
 
     @Slot()
+    def _on_step_port_config_changed(self) -> None:
+        if self._same_port:
+            return
+        port = self._step_port_combo.currentText()
+        baudrate_text = self._step_baud_combo.currentText()
+        if not port or not baudrate_text:
+            return
+        existing = self._config.step_port_config
+        new_config = PortConfig(
+            port=port,
+            baudrate=int(baudrate_text),
+            bytesize=existing.bytesize if existing else 8,
+            parity=existing.parity if existing else "N",
+            stopbits=existing.stopbits if existing else 1.0,
+        )
+        self._config.step_port_config = new_config
+        self.step_port_config_changed.emit(self._config.device_id, new_config)
+
+    @Slot(bool)
+    def _on_same_port_changed(self, same: bool) -> None:
+        self._same_port = same
+        self._step_form_widget.setVisible(not same)
+        if same:
+            self._config.step_port_config = None
+            self.step_port_config_changed.emit(self._config.device_id, None)
+
+    @Slot()
     def _on_name_changed(self, name: str) -> None:
         self._config.name = name
         self.port_config_changed.emit(self._config.device_id, self._config.port_config)
 
     @Slot()
     def _on_advanced_port(self) -> None:
-        if self.worker is not None:
+        if self.query_worker is not None:
             InfoBar.warning(
                 title="请先断开连接",
                 content="修改高级串口参数前请先断开设备连接。",
@@ -551,69 +635,112 @@ class DeviceCard(CardWidget):
             self._do_disconnect()
 
     def _do_connect(self) -> None:
-        port = self._port_combo.currentText()
-        if not port:
+        query_port = self._port_combo.currentText()
+        if not query_port:
             self._switch.setChecked(False)
             return
+
+        # 构建查询串口配置
         existing = self._config.port_config
-        config = PortConfig(
-            port=port,
+        query_config = PortConfig(
+            port=query_port,
             baudrate=int(self._baud_combo.currentText()),
             bytesize=existing.bytesize if existing else 8,
             parity=existing.parity if existing else "N",
             stopbits=existing.stopbits if existing else 1.0,
         )
+
+        # 构建阶跃串口配置
+        step_config = None
+        if not self._same_port:
+            step_port = self._step_port_combo.currentText()
+            if step_port:
+                step_existing = self._config.step_port_config
+                step_config = PortConfig(
+                    port=step_port,
+                    baudrate=int(self._step_baud_combo.currentText()),
+                    bytesize=step_existing.bytesize if step_existing else 8,
+                    parity=step_existing.parity if step_existing else "N",
+                    stopbits=step_existing.stopbits if step_existing else 1.0,
+                )
+
         parser_cls = BUILTIN_PARSERS[self._parser_combo.currentText()]
-        self.worker = self._manager.create_worker(self._config.device_id, config, parser_cls(), self._repository)
-        self.worker.connected.connect(self._on_connected)
-        self.worker.disconnected.connect(self._on_disconnected)
-        self.worker.error_occurred.connect(self._on_error)
-        self.worker.frame_received.connect(self._on_frame)
-        self._port_combo.setEnabled(False)
-        self._baud_combo.setEnabled(False)
-        self._parser_combo.setEnabled(False)
-        self._name_label.set_editable(False)
-        self._advanced_btn.setEnabled(False)
-        asyncio.create_task(self.worker.connect())
+        self.query_worker, self.step_worker = self._manager.create_workers(
+            self._config.device_id,
+            query_config,
+            parser_cls(),
+            step_config,
+            parser_cls(),
+            self._repository,
+        )
+        self.worker = self.query_worker
+
+        # 连接信号
+        self.query_worker.connected.connect(self._on_query_connected)
+        self.query_worker.disconnected.connect(self._on_query_disconnected)
+        self.query_worker.error_occurred.connect(self._on_error)
+        self.query_worker.frame_received.connect(self._on_frame)
+
+        if step_config is not None:
+            self.step_worker.connected.connect(self._on_step_connected)
+            self.step_worker.disconnected.connect(self._on_step_disconnected)
+            self.step_worker.error_occurred.connect(self._on_error)
+
+        self._set_controls_enabled(False)
+
+        # 连接两个串口
+        asyncio.create_task(self.query_worker.connect())
+        if step_config is not None:
+            asyncio.create_task(self.step_worker.connect())
 
     def _do_disconnect(self) -> None:
-        if self.worker:
-            asyncio.create_task(self.worker.disconnect())
+        if self.query_worker:
+            asyncio.create_task(self.query_worker.disconnect())
+        if self.step_worker and self.step_worker is not self.query_worker:
+            asyncio.create_task(self.step_worker.disconnect())
+
+    # 查询串口连接回调
 
     @Slot()
-    def _on_connected(self) -> None:
+    def _on_query_connected(self) -> None:
         self._switch.setText("已连接")
         self._dot.set_connected(True)
         self._set_measurement_enabled(True)
         self.device_selected.emit(self._config.device_id)
 
     @Slot()
-    def _on_disconnected(self) -> None:
+    def _on_query_disconnected(self) -> None:
         self._switch.setChecked(False)
         self._switch.setText("已断开")
         self._dot.set_connected(False)
-        self._port_combo.setEnabled(True)
-        self._baud_combo.setEnabled(True)
-        self._parser_combo.setEnabled(True)
-        self._name_label.set_editable(True)
-        self._advanced_btn.setEnabled(True)
+        self._set_controls_enabled(True)
         self._set_measurement_enabled(False)
-        self._manager.remove_worker(self._config.device_id)
+        self._manager.remove_workers(self._config.device_id)
+        self.query_worker = None
+        self.step_worker = None
         self.worker = None
-        # 重置测量状态
         self._state = MeasurementState()
         self._display.reset()
         self.device_selected.emit(self._config.device_id)
+
+    # 阶跃串口连接回调
+
+    @Slot()
+    def _on_step_connected(self) -> None:
+        spc = self._config.step_port_config
+        port_name = spc.port if spc else "?"
+        logger.info(f"[{self._config.device_id}] 阶跃串口 {port_name} 已连接")
+
+    @Slot()
+    def _on_step_disconnected(self) -> None:
+        logger.info(f"[{self._config.device_id}] 阶跃串口已断开")
+        # 如果查询串口还在，不需要重置 UI；查询串口断开时会统一清理
 
     @Slot(str)
     def _on_error(self, msg: str) -> None:
         self._switch.setChecked(False)
         self._switch.setText("已断开")
-        self._port_combo.setEnabled(True)
-        self._baud_combo.setEnabled(True)
-        self._parser_combo.setEnabled(True)
-        self._name_label.set_editable(True)
-        self._advanced_btn.setEnabled(True)
+        self._set_controls_enabled(True)
         InfoBar.error(
             title="串口错误",
             content=f"[{self._config.name}] {msg}",
@@ -623,7 +750,6 @@ class DeviceCard(CardWidget):
         )
 
     def _on_drag_started(self, drag: QDrag) -> None:
-        """手柄触发拖拽时，填充 MimeData 和预览图。"""
         mime = QMimeData()
         mime.setData("application/x-device-id", self._config.device_id.encode("utf-8"))
         drag.setMimeData(mime)
@@ -649,12 +775,10 @@ class DeviceCard(CardWidget):
 
     @Slot()
     def _on_cmd_changed(self) -> None:
-        """用户修改读取指令后同步到 config 并通知面板持久化。"""
         self._config.read_cmd_hex = self._cmd_edit.text().strip()
         self.cmd_changed.emit(self._config.device_id, self._config.read_cmd_hex)
 
     def _build_read_frame(self) -> bytes | None:
-        """将命令输入框内容解析为带CRC的完整帧，失败返回 None。"""
         hex_text = self._cmd_edit.text().replace(" ", "").replace(":", "")
         if not hex_text:
             return None
@@ -673,24 +797,23 @@ class DeviceCard(CardWidget):
 
     @Slot()
     def _on_zero(self) -> None:
-        """归零：发送一次读取，将响应值记为基准值。"""
-        if not self.worker:
+        if not self.query_worker:
             return
         frame = self._build_read_frame()
         if frame is None:
             return
         self._state.zero_pending = True
         self._zero_btn.setEnabled(False)
-        asyncio.create_task(self.worker.send(frame))
+        asyncio.create_task(self.query_worker.send(frame))
 
     @Slot()
     def _on_read(self) -> None:
-        if not self.worker:
+        if not self.query_worker:
             return
         frame = self._build_read_frame()
         if frame is None:
             return
-        asyncio.create_task(self.worker.send(frame))
+        asyncio.create_task(self.query_worker.send(frame))
 
     @Slot(object)
     def _on_frame(self, frame) -> None:
@@ -737,8 +860,8 @@ class DeviceListPanel(QWidget):
         self._cards: dict[str, DeviceCard] = {}
         self._selected_id: str | None = None
         self._manager = manager
-        self._repository = repository  # 帧存储（传给 SerialWorker）
-        self._db_repo = db_repo  # 设备配置存储
+        self._repository = repository
+        self._db_repo = db_repo
         self._container_layout: QVBoxLayout
         self._scroll_container: QWidget
         self._build_ui(device_configs)
@@ -748,7 +871,6 @@ class DeviceListPanel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # 顶部标题栏
         header = QWidget()
         header.setFixedHeight(48)
         header.setStyleSheet("background: transparent;")
@@ -765,7 +887,6 @@ class DeviceListPanel(QWidget):
         h_layout.addWidget(add_btn)
         outer.addWidget(header)
 
-        # 滚动区域
         scroll = ScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -800,13 +921,13 @@ class DeviceListPanel(QWidget):
         card.measure_requested.connect(self.measure_requested)
         card.cmd_changed.connect(self._on_card_cmd_changed)
         card.port_config_changed.connect(self._on_port_config_changed)
+        card.step_port_config_changed.connect(self._on_step_port_config_changed)
         insert_pos = max(self._container_layout.count() - 1, 0)
         self._container_layout.insertWidget(insert_pos, card)
         self._cards[cfg.device_id] = card
         return card
 
     def _sort_order(self, device_id: str) -> int:
-        """返回指定设备在当前列表中的顺序索引。"""
         return list(self._cards.keys()).index(device_id) if device_id in self._cards else 0
 
     # ------------------------------------------------------------------ #
@@ -840,7 +961,6 @@ class DeviceListPanel(QWidget):
         if src_idx == target_idx or src_idx + 1 == target_idx:
             event.acceptProposedAction()
             return
-        # 重排 _cards（OrderedDict 语义：先删再插）
         card = cards_list.pop(src_idx)
         if target_idx > src_idx:
             target_idx -= 1
@@ -857,11 +977,10 @@ class DeviceListPanel(QWidget):
         return len(cards_list)
 
     def _rebuild_layout(self) -> None:
-        """按 _cards 当前顺序重建 layout。"""
         while self._container_layout.count() > 0:
             item = self._container_layout.takeAt(0)
             if item.widget():
-                item.widget().setParent(self._scroll_container)  # 临时归属，避免销毁
+                item.widget().setParent(self._scroll_container)
         for card in self._cards.values():
             self._container_layout.addWidget(card)
         self._container_layout.addStretch()
@@ -871,7 +990,13 @@ class DeviceListPanel(QWidget):
             return
         for i, card in enumerate(self._cards.values()):
             asyncio.create_task(
-                self._db_repo.save_device(card._config, card._config.read_cmd_hex, i, card._config.port_config)
+                self._db_repo.save_device(
+                    card._config,
+                    card._config.read_cmd_hex,
+                    i,
+                    card._config.port_config,
+                    card._config.step_port_config,
+                )
             )
 
     # ------------------------------------------------------------------ #
@@ -885,7 +1010,11 @@ class DeviceListPanel(QWidget):
         self._insert_card(cfg)
         if self._db_repo is not None:
             order = self._sort_order(cfg.device_id)
-            asyncio.create_task(self._db_repo.save_device(cfg, cfg.read_cmd_hex, order))
+            asyncio.create_task(
+                self._db_repo.save_device(
+                    cfg, cfg.read_cmd_hex, order, cfg.port_config, cfg.step_port_config
+                )
+            )
         return cfg.device_id
 
     @Slot(str)
@@ -893,8 +1022,10 @@ class DeviceListPanel(QWidget):
         card = self._cards.pop(device_id, None)
         if card is None:
             return
-        if card.worker:
-            asyncio.create_task(card.worker.disconnect())
+        if card.query_worker:
+            asyncio.create_task(card.query_worker.disconnect())
+        if card.step_worker and card.step_worker is not card.query_worker:
+            asyncio.create_task(card.step_worker.disconnect())
         self._container_layout.removeWidget(card)
         card.deleteLater()
         if self._db_repo is not None:
@@ -926,7 +1057,10 @@ class DeviceListPanel(QWidget):
         if card is None:
             return
         asyncio.create_task(
-            self._db_repo.save_device(card._config, new_hex, self._sort_order(device_id), card._config.port_config)
+            self._db_repo.save_device(
+                card._config, new_hex, self._sort_order(device_id),
+                card._config.port_config, card._config.step_port_config,
+            )
         )
 
     @Slot(str, object)
@@ -937,7 +1071,24 @@ class DeviceListPanel(QWidget):
         if card is None:
             return
         asyncio.create_task(
-            self._db_repo.save_device(card._config, card._config.read_cmd_hex, self._sort_order(device_id), port_config)
+            self._db_repo.save_device(
+                card._config, card._config.read_cmd_hex, self._sort_order(device_id),
+                port_config, card._config.step_port_config,
+            )
+        )
+
+    @Slot(str, object)
+    def _on_step_port_config_changed(self, device_id: str, step_port_config) -> None:
+        if self._db_repo is None:
+            return
+        card = self._cards.get(device_id)
+        if card is None:
+            return
+        asyncio.create_task(
+            self._db_repo.save_device(
+                card._config, card._config.read_cmd_hex, self._sort_order(device_id),
+                card._config.port_config, step_port_config,
+            )
         )
 
     @Slot(str)

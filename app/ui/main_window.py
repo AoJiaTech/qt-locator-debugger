@@ -79,19 +79,23 @@ class _MainPage(QWidget):
         layout.addWidget(splitter)
 
     def _ensure_device_tab(self, device_id: str) -> bool:
-        worker = self._manager.get_worker(device_id)
-        if worker is None:
+        query_worker, step_worker = self._manager.get_device_workers(device_id)
+        if query_worker is None:
             self._device_panel.remove_tab(device_id)
             return False
 
         cfg = self._device_list.get_config(device_id)
         name = cfg.name if cfg else device_id
         read_cmd_hex = cfg.read_cmd_hex if cfg else ""
+        port_label = query_worker.config.port
+        if step_worker is not None and step_worker is not query_worker:
+            port_label = f"{query_worker.config.port}+{step_worker.config.port}"
         self._device_panel.add_tab(
             device_id,
-            f"{name}  [{worker.config.port}]",
-            worker,
+            f"{name}  [{port_label}]",
+            query_worker,
             read_cmd_hex=read_cmd_hex,
+            step_worker=step_worker,
         )
         return True
 

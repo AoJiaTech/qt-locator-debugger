@@ -156,14 +156,26 @@ class SendPanel(CardWidget):
 
 
 class PortTab(QWidget):
-    """单个串口的收发 Tab 页。"""
+    """单个设备的收发 Tab 页，支持双串口合并显示。"""
 
-    def __init__(self, worker: SerialWorker, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        query_worker: SerialWorker,
+        step_worker: SerialWorker | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
-        self._worker = worker
+        self._query_worker = query_worker
+        self._step_worker = step_worker
+        self._dual_port = step_worker is not None and step_worker is not query_worker
         self._build_ui()
-        worker.frame_received.connect(self._on_frame)
-        worker.error_occurred.connect(self._on_error)
+
+        query_worker.frame_received.connect(self._on_query_frame)
+        query_worker.error_occurred.connect(self._on_error)
+
+        if self._dual_port:
+            step_worker.frame_received.connect(self._on_step_frame)
+            step_worker.error_occurred.connect(self._on_error)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -180,38 +192,43 @@ class PortTab(QWidget):
         )
         layout.addWidget(self._recv, stretch=1)
 
-        # 发送面板
+        # 发送面板（绑定查询串口）
         self._send_panel = SendPanel()
-        self._send_panel.set_worker(self._worker)
+        self._send_panel.set_worker(self._query_worker)
         self._send_panel.set_clear_callback(self._recv.clear)
         layout.addWidget(self._send_panel)
 
     def detach_worker(self) -> None:
         try:
-            self._worker.frame_received.disconnect(self._on_frame)
-            self._worker.error_occurred.disconnect(self._on_error)
+            self._query_worker.frame_received.disconnect(self._on_query_frame)
+            self._query_worker.error_occurred.disconnect(self._on_error)
         except RuntimeError:
             pass
+        if self._dual_port:
+            try:
+                self._step_worker.frame_received.disconnect(self._on_step_frame)
+                self._step_worker.error_occurred.disconnect(self._on_error)
+            except RuntimeError:
+                pass
         self._send_panel.set_worker(None)
 
-    @Slot(Frame)
-    def _on_frame(self, frame: Frame) -> None:
+    def _format_frame(self, frame: Frame, port_label: str) -> str:
         ts = frame.timestamp.strftime("%H:%M:%S.%f")[:-3]
-        if frame.direction == Direction.TX:
-            prefix = '<span style="color:#0078d4;">→ TX</span>'
-        else:
-            prefix = '<span style="color:#107c10;">← RX</span>'
+        direction = "→ TX" if frame.direction == Direction.TX else "← RX"
         hex_str = frame.raw.hex(" ").upper()
-        line = f"[{ts}] {prefix} | {hex_str}"
-        if frame.parsed:
-            line += f'<br><span style="color:#888;margin-left:32px;">　　 解析: {frame.parsed}</span>'
-        # PlainTextEdit 不支持 HTML，改用 appendPlainText 保持性能
-        ts_plain = frame.timestamp.strftime("%H:%M:%S.%f")[:-3]
-        direction_plain = "→ TX" if frame.direction == Direction.TX else "← RX"
-        plain = f"[{ts_plain}] {direction_plain} | {hex_str}"
+        plain = f"[{ts}] {port_label} {direction} | {hex_str}"
         if frame.parsed:
             plain += f"\n         解析: {frame.parsed}"
-        self._recv.appendPlainText(plain)
+        return plain
+
+    @Slot(Frame)
+    def _on_query_frame(self, frame: Frame) -> None:
+        label = "[查询口] " if self._dual_port else ""
+        self._recv.appendPlainText(self._format_frame(frame, label))
+
+    @Slot(Frame)
+    def _on_step_frame(self, frame: Frame) -> None:
+        self._recv.appendPlainText(self._format_frame(frame, "[阶跃口] "))
 
     @Slot(str)
     def _on_error(self, msg: str) -> None:
@@ -262,7 +279,14 @@ class DevicePanel(QWidget):
     # 公共接口
     # ------------------------------------------------------------------ #
 
-    def add_tab(self, device_id: str, label: str, worker: SerialWorker, read_cmd_hex: str = "") -> None:
+    def add_tab(
+        self,
+        device_id: str,
+        label: str,
+        query_worker: SerialWorker,
+        read_cmd_hex: str = "",
+        step_worker: SerialWorker | None = None,
+    ) -> None:
         if device_id in self._tabs:
             self._tab_widget.setCurrentWidget(self._tabs[device_id])
             panel = self._chart_panels.get(device_id)
@@ -270,15 +294,16 @@ class DevicePanel(QWidget):
                 self._chart_tabs.setCurrentWidget(panel)
             return
 
-        tab = PortTab(worker)
+        tab = PortTab(query_worker, step_worker)
         self._tabs[device_id] = tab
         self._tab_widget.addTab(tab, label, FluentIcon.IOT)
         self._tab_widget.setCurrentWidget(tab)
 
         panel = MeasurementPanel()
         controller = MeasurementController(
-            worker=worker,
+            read_worker=query_worker,
             read_cmd_hex=read_cmd_hex,
+            step_worker=step_worker,
             repository=self._repository,
         )
         panel.set_controller(controller)
@@ -293,6 +318,7 @@ class DevicePanel(QWidget):
         controller = self._controllers.pop(device_id, None)
         if controller is not None:
             controller.stop()
+            controller.detach()
 
         panel = self._chart_panels.pop(device_id, None)
         if panel is not None:
