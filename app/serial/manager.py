@@ -1,3 +1,5 @@
+import asyncio
+
 from app.logger import logger
 from app.models.domain import PortConfig
 from app.serial.parser import BaseParser
@@ -21,21 +23,35 @@ class SerialManager:
         repository: BaseRepository | None = None,
     ) -> tuple[SerialWorker, SerialWorker]:
         """为指定设备创建查询 worker 和阶跃 worker。
-        step_config 为 None 时，阶跃 worker 复用查询串口（单串口兼容）。
+
+        step_config 为 None 时，阶跃 worker 直接复用 query worker 实例（单串口兼容），
+        manager 字典中 query/step 两个 key 指向同一对象，避免下游误判为双串口。
         返回 (query_worker, step_worker)。
         """
-        # 先清理旧 worker
+        # 替换前防御性断开旧 worker（异常重连等非正常路径下，旧 worker 可能仍持有打开的串口）
+        old_workers = {
+            self._workers.get((device_id, "query")),
+            self._workers.get((device_id, "step")),
+        }
+        for old in old_workers:
+            if old is not None:
+                asyncio.create_task(old.disconnect())
         self.remove_workers(device_id)
 
         query_worker = SerialWorker(query_config, device_id, query_parser, repository)
         self._workers[(device_id, "query")] = query_worker
 
-        eff_step_config = step_config or query_config
-        eff_step_parser = step_parser or query_parser
-        step_worker = SerialWorker(eff_step_config, device_id, eff_step_parser, repository)
-        self._workers[(device_id, "step")] = step_worker
+        if step_config is None:
+            # 单串口模式：阶跃 worker 与查询 worker 共用同一实例
+            step_worker = query_worker
+            self._workers[(device_id, "step")] = query_worker
+            logger.info(f"[Manager] 设备 {device_id}: query=step={query_config.port} (单串口模式)")
+        else:
+            eff_step_parser = step_parser or query_parser
+            step_worker = SerialWorker(step_config, device_id, eff_step_parser, repository)
+            self._workers[(device_id, "step")] = step_worker
+            logger.info(f"[Manager] 设备 {device_id}: query={query_config.port}, step={step_config.port}")
 
-        logger.info(f"[Manager] 设备 {device_id}: query={query_config.port}, step={eff_step_config.port}")
         return query_worker, step_worker
 
     def get_worker(self, device_id: str, role: str) -> SerialWorker | None:
@@ -50,7 +66,8 @@ class SerialManager:
         self._workers.pop((device_id, "step"), None)
 
     async def disconnect_all(self) -> None:
-        for worker in list(self._workers.values()):
+        # 用 set 去重：单串口模式下 query/step 指向同一 worker，避免重复断开
+        for worker in set(self._workers.values()):
             await worker.disconnect()
         self._workers.clear()
         logger.info("[Manager] 所有串口已断开")

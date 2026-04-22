@@ -734,13 +734,22 @@ class DeviceCard(CardWidget):
     @Slot()
     def _on_step_disconnected(self) -> None:
         logger.info(f"[{self._config.device_id}] 阶跃串口已断开")
-        # 如果查询串口还在，不需要重置 UI；查询串口断开时会统一清理
+        # 双串口模式下阶跃口掉线视为致命错误：测量流程无法继续，
+        # 需要联动断开查询口并提示用户，避免界面仍显示「已连接」但实际不可测量
+        if self.step_worker is not None and self.step_worker is not self.query_worker:
+            InfoBar.warning(
+                title="阶跃串口已断开",
+                content=f"[{self._config.name}] 阶跃口异常断开，已自动断开整台设备",
+                position=InfoBarPosition.TOP_RIGHT,
+                duration=4000,
+                parent=self.window(),
+            )
+            # 走统一断开流程：query worker 断开后 _on_query_disconnected 会做全量清理
+            if self.query_worker is not None:
+                asyncio.create_task(self.query_worker.disconnect())
 
     @Slot(str)
     def _on_error(self, msg: str) -> None:
-        self._switch.setChecked(False)
-        self._switch.setText("已断开")
-        self._set_controls_enabled(True)
         InfoBar.error(
             title="串口错误",
             content=f"[{self._config.name}] {msg}",
@@ -748,6 +757,15 @@ class DeviceCard(CardWidget):
             duration=4000,
             parent=self.window(),
         )
+        # 串口异常后统一走断开清理流程，避免 manager 中残留 worker
+        # 或持有失效的串口引用，导致资源泄漏、重连失败或状态错乱。
+        # 注意：connect() 失败时不会发 disconnected，需要这里手动触发清理；
+        # 已连接后异常时 disconnect() 自身会 emit disconnected 触发 _on_query_disconnected。
+        if self.query_worker is not None:
+            self._do_disconnect()
+        else:
+            # 无 worker（例如连接尚未建立就失败），直接复位 UI
+            self._on_query_disconnected()
 
     def _on_drag_started(self, drag: QDrag) -> None:
         mime = QMimeData()
