@@ -1125,9 +1125,7 @@ class DeviceListPanel(QWidget):
         if self._db_repo is not None:
             order = self._sort_order(cfg.device_id)
             asyncio.create_task(
-                self._db_repo.save_device(
-                    cfg, cfg.read_cmd_hex, order, cfg.port_config, cfg.step_port_config
-                )
+                self._db_repo.save_device(cfg, cfg.read_cmd_hex, order, cfg.port_config, cfg.step_port_config)
             )
         return cfg.device_id
 
@@ -1172,8 +1170,11 @@ class DeviceListPanel(QWidget):
             return
         asyncio.create_task(
             self._db_repo.save_device(
-                card._config, new_hex, self._sort_order(device_id),
-                card._config.port_config, card._config.step_port_config,
+                card._config,
+                new_hex,
+                self._sort_order(device_id),
+                card._config.port_config,
+                card._config.step_port_config,
             )
         )
 
@@ -1186,8 +1187,11 @@ class DeviceListPanel(QWidget):
             return
         asyncio.create_task(
             self._db_repo.save_device(
-                card._config, card._config.read_cmd_hex, self._sort_order(device_id),
-                port_config, card._config.step_port_config,
+                card._config,
+                card._config.read_cmd_hex,
+                self._sort_order(device_id),
+                port_config,
+                card._config.step_port_config,
             )
         )
 
@@ -1200,8 +1204,11 @@ class DeviceListPanel(QWidget):
             return
         asyncio.create_task(
             self._db_repo.save_device(
-                card._config, card._config.read_cmd_hex, self._sort_order(device_id),
-                card._config.port_config, step_port_config,
+                card._config,
+                card._config.read_cmd_hex,
+                self._sort_order(device_id),
+                card._config.port_config,
+                step_port_config,
             )
         )
 

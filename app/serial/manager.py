@@ -31,9 +31,7 @@ class SerialManager:
         把刚装上的新 worker 又清掉，造成竞态。调用方需自行保证替换前已断开 + detach。
         """
         if device_id in {k[0] for k in self._workers}:
-            logger.warning(
-                f"[Manager] 设备 {device_id} 已存在 worker，调用方应先 disconnect 再 create_workers"
-            )
+            logger.warning(f"[Manager] 设备 {device_id} 已存在 worker，调用方应先 disconnect 再 create_workers")
 
         self.remove_workers(device_id)
 
