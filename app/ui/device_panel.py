@@ -155,8 +155,63 @@ class SendPanel(CardWidget):
             self._on_clear_cb()
 
 
+class _PortSubTab(QWidget):
+    """Single-port sub-tab: recv area + send panel."""
+
+    _RECV_STYLE = (
+        "PlainTextEdit { font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px; border-radius: 6px; }"
+    )
+
+    def __init__(self, worker: SerialWorker, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._worker = worker
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
+
+        self._recv = PlainTextEdit()
+        self._recv.setReadOnly(True)
+        self._recv.setPlaceholderText("等待数据...")
+        self._recv.setStyleSheet(self._RECV_STYLE)
+        layout.addWidget(self._recv, stretch=1)
+
+        self._send_panel = SendPanel()
+        self._send_panel.set_worker(worker)
+        self._send_panel.set_clear_callback(self._recv.clear)
+        layout.addWidget(self._send_panel)
+
+        worker.frame_received.connect(self._on_frame)
+        worker.error_occurred.connect(self._on_error)
+
+    def detach(self) -> None:
+        try:
+            self._worker.frame_received.disconnect(self._on_frame)
+            self._worker.error_occurred.disconnect(self._on_error)
+        except RuntimeError:
+            pass
+        self._send_panel.set_worker(None)
+
+    @staticmethod
+    def _format_frame(frame: Frame) -> str:
+        ts = frame.timestamp.strftime("%H:%M:%S.%f")[:-3]
+        direction = "→ TX" if frame.direction == Direction.TX else "← RX"
+        hex_str = frame.raw.hex(" ").upper()
+        plain = f"[{ts}] {direction} | {hex_str}"
+        if frame.parsed:
+            plain += f"\n         解析: {frame.parsed}"
+        return plain
+
+    @Slot(Frame)
+    def _on_frame(self, frame: Frame) -> None:
+        self._recv.appendPlainText(self._format_frame(frame))
+
+    @Slot(str)
+    def _on_error(self, msg: str) -> None:
+        self._recv.appendPlainText(f"[错误] {msg}")
+
+
 class PortTab(QWidget):
-    """单个设备的收发 Tab 页，支持双串口合并显示。"""
+    """单个设备的收发 Tab 页。双串口时拆分为查询口/阶跃口两个子 Tab。"""
 
     def __init__(
         self,
@@ -165,76 +220,31 @@ class PortTab(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._query_worker = query_worker
-        self._step_worker = step_worker
         self._dual_port = step_worker is not None and step_worker is not query_worker
-        self._build_ui()
+        self._sub_tabs: list[_PortSubTab] = []
+        self._build_ui(query_worker, step_worker)
 
-        query_worker.frame_received.connect(self._on_query_frame)
-        query_worker.error_occurred.connect(self._on_error)
-
-        if step_worker is not None and step_worker is not query_worker:
-            step_worker.frame_received.connect(self._on_step_frame)
-            step_worker.error_occurred.connect(self._on_error)
-
-    def _build_ui(self) -> None:
+    def _build_ui(self, query_worker: SerialWorker, step_worker: SerialWorker | None) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # 接收区
-        self._recv = PlainTextEdit()
-        self._recv.setReadOnly(True)
-        self._recv.setPlaceholderText("等待数据...")
-        self._recv.setStyleSheet(
-            "PlainTextEdit { font-family: 'Cascadia Code', 'Consolas', monospace; "
-            "font-size: 12px; border-radius: 6px; }"
-        )
-        layout.addWidget(self._recv, stretch=1)
-
-        # 发送面板（绑定查询串口）
-        self._send_panel = SendPanel()
-        self._send_panel.set_worker(self._query_worker)
-        self._send_panel.set_clear_callback(self._recv.clear)
-        layout.addWidget(self._send_panel)
+        if self._dual_port:
+            tab_widget = TabWidget()
+            query_sub = _PortSubTab(query_worker)
+            step_sub = _PortSubTab(step_worker)
+            self._sub_tabs = [query_sub, step_sub]
+            tab_widget.addTab(query_sub, "查询口")
+            tab_widget.addTab(step_sub, "阶跃口")
+            layout.addWidget(tab_widget)
+        else:
+            sub = _PortSubTab(query_worker)
+            self._sub_tabs = [sub]
+            layout.addWidget(sub)
 
     def detach_worker(self) -> None:
-        try:
-            self._query_worker.frame_received.disconnect(self._on_query_frame)
-            self._query_worker.error_occurred.disconnect(self._on_error)
-        except RuntimeError:
-            pass
-        sw = self._step_worker
-        if sw is not None and sw is not self._query_worker:
-            try:
-                sw.frame_received.disconnect(self._on_step_frame)
-                sw.error_occurred.disconnect(self._on_error)
-            except RuntimeError:
-                pass
-        self._send_panel.set_worker(None)
-
-    def _format_frame(self, frame: Frame, port_label: str) -> str:
-        ts = frame.timestamp.strftime("%H:%M:%S.%f")[:-3]
-        direction = "→ TX" if frame.direction == Direction.TX else "← RX"
-        hex_str = frame.raw.hex(" ").upper()
-        prefix = f"{port_label}{direction}" if port_label else direction
-        plain = f"[{ts}] {prefix} | {hex_str}"
-        if frame.parsed:
-            plain += f"\n         解析: {frame.parsed}"
-        return plain
-
-    @Slot(Frame)
-    def _on_query_frame(self, frame: Frame) -> None:
-        label = "[查询口] " if self._dual_port else ""
-        self._recv.appendPlainText(self._format_frame(frame, label))
-
-    @Slot(Frame)
-    def _on_step_frame(self, frame: Frame) -> None:
-        self._recv.appendPlainText(self._format_frame(frame, "[阶跃口] "))
-
-    @Slot(str)
-    def _on_error(self, msg: str) -> None:
-        self._recv.appendPlainText(f"[错误] {msg}")
+        for sub in self._sub_tabs:
+            sub.detach()
 
 
 class DevicePanel(QWidget):

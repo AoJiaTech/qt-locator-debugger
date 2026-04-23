@@ -658,7 +658,9 @@ class DeviceCard(CardWidget):
     def _do_connect(self) -> None:
         query_port = self._port_combo.currentText()
         if not query_port:
+            self._switch.blockSignals(True)
             self._switch.setChecked(False)
+            self._switch.blockSignals(False)
             return
 
         # 构建查询串口配置
@@ -683,7 +685,9 @@ class DeviceCard(CardWidget):
                     duration=3000,
                     parent=self.window(),
                 )
+                self._switch.blockSignals(True)
                 self._switch.setChecked(False)
+                self._switch.blockSignals(False)
                 return
             if step_port == query_port:
                 InfoBar.warning(
@@ -693,7 +697,9 @@ class DeviceCard(CardWidget):
                     duration=3000,
                     parent=self.window(),
                 )
+                self._switch.blockSignals(True)
                 self._switch.setChecked(False)
+                self._switch.blockSignals(False)
                 return
             step_existing = self._config.step_port_config
             step_config = PortConfig(
