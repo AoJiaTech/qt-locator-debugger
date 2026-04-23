@@ -173,7 +173,7 @@ class PortTab(QWidget):
         query_worker.frame_received.connect(self._on_query_frame)
         query_worker.error_occurred.connect(self._on_error)
 
-        if self._dual_port:
+        if step_worker is not None and step_worker is not query_worker:
             step_worker.frame_received.connect(self._on_step_frame)
             step_worker.error_occurred.connect(self._on_error)
 
@@ -204,10 +204,11 @@ class PortTab(QWidget):
             self._query_worker.error_occurred.disconnect(self._on_error)
         except RuntimeError:
             pass
-        if self._dual_port:
+        sw = self._step_worker
+        if sw is not None and sw is not self._query_worker:
             try:
-                self._step_worker.frame_received.disconnect(self._on_step_frame)
-                self._step_worker.error_occurred.disconnect(self._on_error)
+                sw.frame_received.disconnect(self._on_step_frame)
+                sw.error_occurred.disconnect(self._on_error)
             except RuntimeError:
                 pass
         self._send_panel.set_worker(None)

@@ -1,7 +1,10 @@
 """设备列表面板与通用设备卡片。"""
 
+from __future__ import annotations
+
 import uuid
 import asyncio
+from typing import TYPE_CHECKING
 
 from PySide6.QtGui import QDrag, QColor, QPixmap
 from PySide6.QtSerialPort import QSerialPortInfo
@@ -41,6 +44,9 @@ from app.serial.manager import SerialManager
 from app.serial.parser import BUILTIN_PARSERS
 from app.storage.repository import BaseRepository, SQLAlchemyRepository
 from app.models.domain import PortConfig, DeviceConfig, MeasurementState
+
+if TYPE_CHECKING:
+    from app.serial.worker import SerialWorker
 
 BAUDRATES = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
 
@@ -307,10 +313,10 @@ class DeviceCard(CardWidget):
         self._config = device_config
         self._manager = manager
         self._repository = repository
-        self.query_worker = None
-        self.step_worker = None
+        self.query_worker: SerialWorker | None = None
+        self.step_worker: SerialWorker | None = None
         # 兼容：worker 指向 query_worker
-        self.worker = None
+        self.worker: SerialWorker | None = None
         self._is_selected = False
         self._state = MeasurementState()
         self._disconnecting = False  # 主动断开标志，避免 _on_step_disconnected 误报
