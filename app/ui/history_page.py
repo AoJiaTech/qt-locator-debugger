@@ -395,8 +395,8 @@ class HistoryPage(QWidget):
             )
             return
 
-        worker = self._serial_manager.get_worker(payload["device_id"])
-        if worker is None:
+        query_worker, _step_worker = self._serial_manager.get_device_workers(payload["device_id"])
+        if query_worker is None:
             InfoBar.warning(
                 title="设备未连接",
                 content="当前会话对应设备未连接，无法继续测量。",

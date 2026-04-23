@@ -1,11 +1,11 @@
 import json
 from abc import ABC, abstractmethod
 
+from alembic import command
 from alembic.config import Config
 from sqlalchemy import desc, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from alembic import command
 from app.models.domain import Frame, PortConfig, DeviceConfig
 from app.models.db import DeviceRecord, ParsedRecord, MeasurementPoint, MeasurementSession
 
@@ -70,6 +70,15 @@ class SQLAlchemyRepository(BaseRepository):
                     parity=r.parity or "N",
                     stopbits=r.stopbits or 1.0,
                 )
+            step_port_config = None
+            if r.step_port is not None:
+                step_port_config = PortConfig(
+                    port=r.step_port,
+                    baudrate=r.step_baudrate or 9600,
+                    bytesize=r.step_bytesize or 8,
+                    parity=r.step_parity or "N",
+                    stopbits=r.step_stopbits or 1.0,
+                )
             configs.append(
                 DeviceConfig(
                     device_id=r.device_id,
@@ -77,6 +86,7 @@ class SQLAlchemyRepository(BaseRepository):
                     parser_name=r.parser_name,
                     read_cmd_hex=r.read_cmd_hex,
                     port_config=port_config,
+                    step_port_config=step_port_config,
                 )
             )
         return configs
@@ -87,6 +97,7 @@ class SQLAlchemyRepository(BaseRepository):
         read_cmd_hex: str,
         sort_order: int,
         port_config: PortConfig | None = None,
+        step_port_config: PortConfig | None = None,
     ) -> None:
         """新增或更新一条设备配置（upsert）。"""
         async with self._session_factory() as session:
@@ -101,6 +112,11 @@ class SQLAlchemyRepository(BaseRepository):
                 existing.bytesize = port_config.bytesize if port_config else None
                 existing.parity = port_config.parity if port_config else None
                 existing.stopbits = port_config.stopbits if port_config else None
+                existing.step_port = step_port_config.port if step_port_config else None
+                existing.step_baudrate = step_port_config.baudrate if step_port_config else None
+                existing.step_bytesize = step_port_config.bytesize if step_port_config else None
+                existing.step_parity = step_port_config.parity if step_port_config else None
+                existing.step_stopbits = step_port_config.stopbits if step_port_config else None
             else:
                 session.add(
                     DeviceRecord(
@@ -114,6 +130,11 @@ class SQLAlchemyRepository(BaseRepository):
                         bytesize=port_config.bytesize if port_config else None,
                         parity=port_config.parity if port_config else None,
                         stopbits=port_config.stopbits if port_config else None,
+                        step_port=step_port_config.port if step_port_config else None,
+                        step_baudrate=step_port_config.baudrate if step_port_config else None,
+                        step_bytesize=step_port_config.bytesize if step_port_config else None,
+                        step_parity=step_port_config.parity if step_port_config else None,
+                        step_stopbits=step_port_config.stopbits if step_port_config else None,
                     )
                 )
             await session.commit()
