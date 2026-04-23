@@ -589,6 +589,9 @@ class DeviceCard(CardWidget):
         baudrate_text = self._step_baud_combo.currentText()
         if not port or not baudrate_text:
             return
+        query_port = self._port_combo.currentText()
+        if port == query_port:
+            return
         existing = self._config.step_port_config
         new_config = PortConfig(
             port=port,
@@ -767,6 +770,9 @@ class DeviceCard(CardWidget):
         self._query_connected = False
         self._step_connected = False
         self._is_dual_port = False
+        # 双口模式下查询口断开时，主动断开仍可能存活的 step_worker，避免资源泄漏
+        if self.step_worker is not None and self.step_worker is not self.query_worker:
+            asyncio.create_task(self.step_worker.disconnect())
         self._manager.remove_workers(self._config.device_id)
         self.query_worker = None
         self.step_worker = None

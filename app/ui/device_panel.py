@@ -216,7 +216,8 @@ class PortTab(QWidget):
         ts = frame.timestamp.strftime("%H:%M:%S.%f")[:-3]
         direction = "→ TX" if frame.direction == Direction.TX else "← RX"
         hex_str = frame.raw.hex(" ").upper()
-        plain = f"[{ts}] {port_label} {direction} | {hex_str}"
+        prefix = f"{port_label}{direction}" if port_label else direction
+        plain = f"[{ts}] {prefix} | {hex_str}"
         if frame.parsed:
             plain += f"\n         解析: {frame.parsed}"
         return plain
