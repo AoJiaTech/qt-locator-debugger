@@ -741,6 +741,11 @@ class DeviceCard(CardWidget):
 
     @Slot()
     def _on_query_connected(self) -> None:
+        # 忽略旧 worker 的过期信号，以及主动断开/重连过程中的 late signal
+        if self.sender() is not None and self.sender() is not self.query_worker:
+            return
+        if self._disconnecting:
+            return
         self._query_connected = True
         if self._is_dual_port and not self._step_connected:
             # 双口模式：等阶跃口也连上再切换为已连接
@@ -777,6 +782,11 @@ class DeviceCard(CardWidget):
         spc = self._config.step_port_config
         port_name = spc.port if spc else "?"
         logger.info(f"[{self._config.device_id}] 阶跃串口 {port_name} 已连接")
+        # 忽略旧 worker 的过期信号，以及主动断开/重连过程中的 late signal
+        if self.sender() is not None and self.sender() is not self.step_worker:
+            return
+        if self._disconnecting:
+            return
         self._step_connected = True
         if self._query_connected:
             self._finalize_connected()
