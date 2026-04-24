@@ -34,6 +34,7 @@ jobs:
         shell: bash
         run: |
           uv sync --all-extras --dev
+          uv pip install pyinstaller
           if [ "$RUNNER_OS" == "Windows" ]; then
             echo "$GITHUB_WORKSPACE/.venv/Scripts" >> $GITHUB_PATH
           else
@@ -62,63 +63,77 @@ jobs:
           echo "Version mismatch: project version ${{ steps.version.outputs.VERSION }} != tag version ${{ steps.version.outputs.TAG_VERSION }}"
           exit 1
 
-      - name: Set Nuitka Mode
-        id: nuitka-config
+      - name: Build with PyInstaller (Windows)
+        if: runner.os == 'Windows'
         shell: bash
         run: |
-          if [ "$RUNNER_OS" == "macOS" ]; then
-            echo "MODE=app" >> $GITHUB_OUTPUT
-          else
-            echo "MODE=standalone" >> $GITHUB_OUTPUT
-          fi
+          pyinstaller \
+            --noconfirm \
+            --windowed \
+            --name locator-debugger \
+            --icon app.ico \
+            --collect-all qfluentwidgets \
+            --collect-all pyqtgraph \
+            --hidden-import PySide6.QtAsyncio \
+            --hidden-import aiosqlite \
+            --hidden-import sqlalchemy.dialects.sqlite \
+            main.py
 
-      - name: Build with Nuitka
-        uses: Nuitka/Nuitka-Action@main
-        with:
-          nuitka-version: main
-          mode: ${{ steps.nuitka-config.outputs.MODE }}
-          script-name: main.py
-          output-dir: build
-          enable-plugins: pyside6
-          include-package: |
-            qfluentwidgets
-            sqlalchemy
-            aiosqlite
-            croniter
-            pyqtgraph
-          include-package-data: |
-            qfluentwidgets
-            pyqtgraph
-          include-module: |
-            PySide6.QtAsyncio
-          # disable-console: true  # temporarily disabled for debugging
-          windows-icon-from-ico: app.ico
-          macos-app-icon: icon.icns
-
-      - name: Package artifact (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          ZIP_NAME="locator-debugger-Linux-${{ steps.version.outputs.TAG_NAME }}.zip"
-          cd build/main.dist
-          zip -r "../../$ZIP_NAME" .
-          cd ../..
-
-      - name: Package artifact (macOS)
+      - name: Build with PyInstaller (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          ZIP_NAME="locator-debugger-macOS-${{ steps.version.outputs.TAG_NAME }}.zip"
-          cd build
-          zip -r "../$ZIP_NAME" *.app
-          cd ..
+          pyinstaller \
+            --noconfirm \
+            --windowed \
+            --name locator-debugger \
+            --icon icon.icns \
+            --collect-all qfluentwidgets \
+            --collect-all pyqtgraph \
+            --hidden-import PySide6.QtAsyncio \
+            --hidden-import aiosqlite \
+            --hidden-import sqlalchemy.dialects.sqlite \
+            main.py
+
+      - name: Build with PyInstaller (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          pyinstaller \
+            --noconfirm \
+            --windowed \
+            --name locator-debugger \
+            --collect-all qfluentwidgets \
+            --collect-all pyqtgraph \
+            --hidden-import PySide6.QtAsyncio \
+            --hidden-import aiosqlite \
+            --hidden-import sqlalchemy.dialects.sqlite \
+            main.py
 
       - name: Package artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $zipName = "locator-debugger-Windows-${{ steps.version.outputs.TAG_NAME }}.zip"
-          Compress-Archive -Path "build\main.dist\*" -DestinationPath $zipName
+          Compress-Archive -Path "dist\locator-debugger\*" -DestinationPath $zipName
+
+      - name: Package artifact (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ZIP_NAME="locator-debugger-macOS-${{ steps.version.outputs.TAG_NAME }}.zip"
+          cd dist
+          zip -r "../$ZIP_NAME" locator-debugger.app
+          cd ..
+
+      - name: Package artifact (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ZIP_NAME="locator-debugger-Linux-${{ steps.version.outputs.TAG_NAME }}.zip"
+          cd dist/locator-debugger
+          zip -r "../../$ZIP_NAME" .
+          cd ../..
 
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/')
