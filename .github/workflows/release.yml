@@ -1,7 +1,7 @@
 name: Cross-Platform Build and Release
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
@@ -13,9 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-    
+
     runs-on: ${{ matrix.os }}
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -24,27 +24,21 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-  
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.10' 
-  
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
-        shell: bash
+          python-version: '3.10'
 
-      - name: Get Version
-        id: version
+      - name: Install dependencies
+        shell: bash
         run: |
           uv sync --all-extras --dev
-          
           if [ "$RUNNER_OS" == "Windows" ]; then
             echo "$GITHUB_WORKSPACE/.venv/Scripts" >> $GITHUB_PATH
           else
             echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
           fi
-        shell: bash
 
       - name: Get Version
         id: version
@@ -52,7 +46,7 @@ jobs:
         run: |
           PROJ_VERSION=$(uv version --short)
           echo "VERSION=$PROJ_VERSION" >> $GITHUB_OUTPUT
-          
+
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "TAG_VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
             echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
@@ -67,7 +61,7 @@ jobs:
         run: |
           echo "Version mismatch: project version ${{ steps.version.outputs.VERSION }} != tag version ${{ steps.version.outputs.TAG_VERSION }}"
           exit 1
-          
+
       - name: Set Nuitka Mode
         id: nuitka-config
         shell: bash
@@ -75,46 +69,63 @@ jobs:
           if [ "$RUNNER_OS" == "macOS" ]; then
             echo "MODE=app" >> $GITHUB_OUTPUT
           else
-            echo "MODE=onefile" >> $GITHUB_OUTPUT
+            echo "MODE=standalone" >> $GITHUB_OUTPUT
           fi
 
-      - name: Qt GUI with PySide6
+      - name: Build with Nuitka
         uses: Nuitka/Nuitka-Action@main
         with:
           nuitka-version: main
           mode: ${{ steps.nuitka-config.outputs.MODE }}
           script-name: main.py
+          output-dir: build
           enable-plugins: pyside6
-          include-package-data: qfluentwidgets
-          
-      - name: Package artifact (Linux/macOS)
-        if: runner.os != 'Windows'
+          include-package: |
+            qfluentwidgets
+            sqlalchemy
+            aiosqlite
+            croniter
+            pyqtgraph
+          include-package-data: |
+            qfluentwidgets
+            pyqtgraph
+          include-module: |
+            PySide6.QtAsyncio
+          disable-console: true
+          windows-icon-from-ico: app.ico
+          macos-app-icon: icon.icns
+
+      - name: Package artifact (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          ZIP_NAME="locator-debugger-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}.zip"
+          ZIP_NAME="locator-debugger-Linux-${{ steps.version.outputs.TAG_NAME }}.zip"
+          cd build/main.dist
+          zip -r "../../$ZIP_NAME" .
+          cd ../..
+
+      - name: Package artifact (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ZIP_NAME="locator-debugger-macOS-${{ steps.version.outputs.TAG_NAME }}.zip"
           cd build
-          if [ "$RUNNER_OS" == "macOS" ]; then
-            zip -r "../$ZIP_NAME" *.app
-          else
-            # Linux 打包单文件二进制，用 -j
-            zip -j "../$ZIP_NAME" *.bin
-          fi
+          zip -r "../$ZIP_NAME" *.app
           cd ..
 
-      - name: Rename artifact (Windows)
+      - name: Package artifact (Windows)
         if: runner.os == 'Windows'
-        shell: bash
+        shell: pwsh
         run: |
-          mv build/*.exe "locator-debugger-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}.exe"
+          $zipName = "locator-debugger-Windows-${{ steps.version.outputs.TAG_NAME }}.zip"
+          Compress-Archive -Path "build\main.dist\*" -DestinationPath $zipName
 
       - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/') 
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            locator-debugger-*.exe
-            locator-debugger-*.zip
-          append_body: true 
+          files: locator-debugger-*.zip
+          append_body: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -123,6 +134,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-artifact-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}
-          path: |
-            locator-debugger-*.exe
-            locator-debugger-*.zip
+          path: locator-debugger-*.zip
