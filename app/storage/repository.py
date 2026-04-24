@@ -39,7 +39,7 @@ class SQLAlchemyRepository(BaseRepository):
 
         alembic_cfg = Config(str(base_dir / "alembic.ini"))
         alembic_cfg.set_main_option("script_location", str(base_dir / "migrations"))
-        await asyncio.get_event_loop().run_in_executor(None, command.upgrade, alembic_cfg, "head")
+        await asyncio.get_running_loop().run_in_executor(None, command.upgrade, alembic_cfg, "head")
 
     # ------------------------------------------------------------------ #
     # 帧存储

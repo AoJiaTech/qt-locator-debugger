@@ -34,7 +34,6 @@ jobs:
         shell: bash
         run: |
           uv sync --all-extras --dev
-          uv pip install pyinstaller
           if [ "$RUNNER_OS" == "Windows" ]; then
             echo "$GITHUB_WORKSPACE/.venv/Scripts" >> $GITHUB_PATH
           else
@@ -171,4 +170,5 @@ jobs:
         with:
           name: build-artifact-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}
           path: |
-            dist/locator-debugger-*
+            locator-debugger-*.zip
+            locator-debugger-*.tar.gz
