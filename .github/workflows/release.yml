@@ -77,6 +77,8 @@ jobs:
             --hidden-import PySide6.QtAsyncio \
             --hidden-import aiosqlite \
             --hidden-import sqlalchemy.dialects.sqlite \
+            --hidden-import logging.config \
+            --hidden-import logging.handlers \
             --add-data "alembic.ini;." \
             --add-data "migrations;migrations" \
             main.py
@@ -95,6 +97,8 @@ jobs:
             --hidden-import PySide6.QtAsyncio \
             --hidden-import aiosqlite \
             --hidden-import sqlalchemy.dialects.sqlite \
+            --hidden-import logging.config \
+            --hidden-import logging.handlers \
             --add-data "alembic.ini:." \
             --add-data "migrations:migrations" \
             main.py
@@ -112,6 +116,8 @@ jobs:
             --hidden-import PySide6.QtAsyncio \
             --hidden-import aiosqlite \
             --hidden-import sqlalchemy.dialects.sqlite \
+            --hidden-import logging.config \
+            --hidden-import logging.handlers \
             --add-data "alembic.ini:." \
             --add-data "migrations:migrations" \
             main.py
