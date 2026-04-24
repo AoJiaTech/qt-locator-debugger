@@ -77,6 +77,8 @@ jobs:
             --hidden-import PySide6.QtAsyncio \
             --hidden-import aiosqlite \
             --hidden-import sqlalchemy.dialects.sqlite \
+            --add-data "alembic.ini;." \
+            --add-data "migrations;migrations" \
             main.py
 
       - name: Build with PyInstaller (macOS)
@@ -93,6 +95,8 @@ jobs:
             --hidden-import PySide6.QtAsyncio \
             --hidden-import aiosqlite \
             --hidden-import sqlalchemy.dialects.sqlite \
+            --add-data "alembic.ini:." \
+            --add-data "migrations:migrations" \
             main.py
 
       - name: Build with PyInstaller (Linux)
@@ -108,6 +112,8 @@ jobs:
             --hidden-import PySide6.QtAsyncio \
             --hidden-import aiosqlite \
             --hidden-import sqlalchemy.dialects.sqlite \
+            --add-data "alembic.ini:." \
+            --add-data "migrations:migrations" \
             main.py
 
       - name: Package artifact (Windows)

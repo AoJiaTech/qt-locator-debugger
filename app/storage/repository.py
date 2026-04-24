@@ -29,8 +29,16 @@ class SQLAlchemyRepository(BaseRepository):
     async def init_db(self) -> None:
         """运行 Alembic 迁移，确保数据库 schema 是最新的。"""
         import asyncio
+        import sys
+        from pathlib import Path
 
-        alembic_cfg = Config("alembic.ini")
+        if getattr(sys, "frozen", False):
+            base_dir = Path(sys._MEIPASS)
+        else:
+            base_dir = Path(__file__).resolve().parents[2]
+
+        alembic_cfg = Config(str(base_dir / "alembic.ini"))
+        alembic_cfg.set_main_option("script_location", str(base_dir / "migrations"))
         await asyncio.get_event_loop().run_in_executor(None, command.upgrade, alembic_cfg, "head")
 
     # ------------------------------------------------------------------ #
