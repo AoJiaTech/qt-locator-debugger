@@ -91,7 +91,7 @@ jobs:
             pyqtgraph
           include-module: |
             PySide6.QtAsyncio
-          disable-console: true
+          # disable-console: true  # temporarily disabled for debugging
           windows-icon-from-ico: app.ico
           macos-app-icon: icon.icns
 
