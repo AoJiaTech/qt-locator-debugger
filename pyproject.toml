@@ -39,6 +39,6 @@ typeCheckingMode = "standard"
 
 [dependency-groups]
 dev = [
-    "nuitka>=4.0.7",
+    "pyinstaller>=6.0",
     "pytest>=8.0",
 ]

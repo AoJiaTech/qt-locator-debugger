@@ -11,12 +11,13 @@ def setup_logger(log_dir: str | Path = "logs") -> None:
 
     logger.remove()
 
-    logger.add(
-        sys.stderr,
-        level="DEBUG",
-        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | {message}",
-        colorize=True,
-    )
+    if sys.stderr is not None:
+        logger.add(
+            sys.stderr,
+            level="DEBUG",
+            format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | {message}",
+            colorize=True,
+        )
 
     logger.add(
         sink=log_path / "serial_{time:YYYY-MM-DD}.log",

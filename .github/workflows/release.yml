@@ -1,7 +1,7 @@
 name: Cross-Platform Build and Release
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
@@ -12,10 +12,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+
     runs-on: ${{ matrix.os }}
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -24,27 +24,21 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-  
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.10' 
-  
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
-        shell: bash
+          python-version: '3.10'
 
-      - name: Get Version
-        id: version
+      - name: Install dependencies
+        shell: bash
         run: |
           uv sync --all-extras --dev
-          
           if [ "$RUNNER_OS" == "Windows" ]; then
             echo "$GITHUB_WORKSPACE/.venv/Scripts" >> $GITHUB_PATH
           else
             echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
           fi
-        shell: bash
 
       - name: Get Version
         id: version
@@ -52,7 +46,7 @@ jobs:
         run: |
           PROJ_VERSION=$(uv version --short)
           echo "VERSION=$PROJ_VERSION" >> $GITHUB_OUTPUT
-          
+
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "TAG_VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
             echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
@@ -67,54 +61,106 @@ jobs:
         run: |
           echo "Version mismatch: project version ${{ steps.version.outputs.VERSION }} != tag version ${{ steps.version.outputs.TAG_VERSION }}"
           exit 1
-          
-      - name: Set Nuitka Mode
-        id: nuitka-config
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" == "macOS" ]; then
-            echo "MODE=app" >> $GITHUB_OUTPUT
-          else
-            echo "MODE=onefile" >> $GITHUB_OUTPUT
-          fi
 
-      - name: Qt GUI with PySide6
-        uses: Nuitka/Nuitka-Action@main
-        with:
-          nuitka-version: main
-          mode: ${{ steps.nuitka-config.outputs.MODE }}
-          script-name: main.py
-          enable-plugins: pyside6
-          include-package-data: qfluentwidgets
-          
-      - name: Package artifact (Linux/macOS)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          ZIP_NAME="locator-debugger-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}.zip"
-          cd build
-          if [ "$RUNNER_OS" == "macOS" ]; then
-            zip -r "../$ZIP_NAME" *.app
-          else
-            # Linux 打包单文件二进制，用 -j
-            zip -j "../$ZIP_NAME" *.bin
-          fi
-          cd ..
-
-      - name: Rename artifact (Windows)
+      - name: Build with PyInstaller (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          mv build/*.exe "locator-debugger-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}.exe"
+          pyinstaller \
+            --noconfirm \
+            --windowed \
+            --name locator-debugger \
+            --icon app.ico \
+            --collect-all qfluentwidgets \
+            --collect-all pyqtgraph \
+            --hidden-import PySide6.QtAsyncio \
+            --hidden-import aiosqlite \
+            --hidden-import sqlalchemy.dialects.sqlite \
+            --hidden-import logging.config \
+            --hidden-import logging.handlers \
+            --add-data "alembic.ini;." \
+            --add-data "migrations;migrations" \
+            main.py
+
+      - name: Build with PyInstaller (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          pyinstaller \
+            --noconfirm \
+            --windowed \
+            --name locator-debugger \
+            --icon icon.icns \
+            --collect-all qfluentwidgets \
+            --collect-all pyqtgraph \
+            --hidden-import PySide6.QtAsyncio \
+            --hidden-import aiosqlite \
+            --hidden-import sqlalchemy.dialects.sqlite \
+            --hidden-import logging.config \
+            --hidden-import logging.handlers \
+            --add-data "alembic.ini:." \
+            --add-data "migrations:migrations" \
+            main.py
+
+      - name: Build with PyInstaller (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          pyinstaller \
+            --noconfirm \
+            --windowed \
+            --name locator-debugger \
+            --collect-all qfluentwidgets \
+            --collect-all pyqtgraph \
+            --hidden-import PySide6.QtAsyncio \
+            --hidden-import aiosqlite \
+            --hidden-import sqlalchemy.dialects.sqlite \
+            --hidden-import logging.config \
+            --hidden-import logging.handlers \
+            --add-data "alembic.ini:." \
+            --add-data "migrations:migrations" \
+            main.py
+
+      # ── Package: wrap in a top-level directory so users get a clean folder ──
+
+      - name: Package artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "locator-debugger-Windows-${{ steps.version.outputs.TAG_NAME }}"
+          Rename-Item "dist\locator-debugger" $name
+          Compress-Archive -Path "dist\$name" -DestinationPath "$name.zip"
+
+      - name: Package artifact (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          NAME="locator-debugger-macOS-${{ steps.version.outputs.TAG_NAME }}"
+          cd dist
+          mv locator-debugger.app "$NAME.app"
+          zip -r "../$NAME.zip" "$NAME.app"
+          cd ..
+
+      - name: Package artifact (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          NAME="locator-debugger-Linux-${{ steps.version.outputs.TAG_NAME }}"
+          mv dist/locator-debugger "dist/$NAME"
+          cd dist
+          tar czf "../$NAME.tar.gz" "$NAME"
+          cd ..
+
+      # ── Upload ──
 
       - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/') 
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            locator-debugger-*.exe
             locator-debugger-*.zip
-          append_body: true 
+            locator-debugger-*.tar.gz
+          append_body: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -124,5 +170,5 @@ jobs:
         with:
           name: build-artifact-${{ runner.os }}-${{ steps.version.outputs.TAG_NAME }}
           path: |
-            locator-debugger-*.exe
             locator-debugger-*.zip
+            locator-debugger-*.tar.gz

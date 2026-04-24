@@ -35,4 +35,8 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     setTheme(Theme.AUTO)
-    asyncio.run(main(), loop_factory=lambda: QAsyncioEventLoop(app))
+    try:
+        asyncio.run(main(), loop_factory=lambda: QAsyncioEventLoop(app))
+    except RuntimeError as e:
+        if "Event loop" not in str(e):
+            raise
